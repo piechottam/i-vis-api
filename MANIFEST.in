@@ -1,0 +1,10 @@
+# include
+include LICENSE.txt
+graft conf
+graft docs
+prune docs/_build
+graft tests
+include i_vis.ap/py.typed
+
+# exclude
+global-exclude *.pyc

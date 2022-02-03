@@ -1,0 +1,30 @@
+<!DOCTYPE Query>
+<Query client="biomartclient" processor="TSV" limit="-1" header="1">
+    <Dataset name="hgnc_gene_mart" config="hgnc_gene_config">
+        <Filter name="hgnc_gene__chromosome_1010"
+                value="1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,X,Y,X and Y,mitochondria"
+                filter_list=""/>
+        <Attribute name="hgnc_gene__hgnc_gene_id_1010"/>
+        <Attribute name="hgnc_gene__status_1010"/>
+        <Attribute name="hgnc_gene__approved_symbol_1010"/>
+        <Attribute name="hgnc_gene__approved_name_1010"/>
+        <Attribute name="hgnc_gene__hgnc_alias_symbol__alias_symbol_108"/>
+        <Attribute name="hgnc_gene__hgnc_alias_name__alias_name_107"/>
+        <Attribute name="hgnc_gene__hgnc_previous_symbol__previous_symbol_1012"/>
+        <Attribute name="hgnc_gene__hgnc_previous_name__previous_name_1011"/>
+        <Attribute name="hgnc_gene__chromosome_1010"/>
+        <Attribute name="hgnc_gene__chromosome_location_1010"/>
+        <Attribute name="hgnc_gene__locus_group_1010"/>
+        <Attribute name="hgnc_gene__locus_type_1010"/>
+        <Attribute name="hgnc_gene__date_approved_1010"/>
+        <Attribute name="hgnc_gene__date_name_changed_1010"/>
+        <Attribute name="hgnc_gene__date_symbol_changed_1010"/>
+        <Attribute name="hgnc_gene__date_modified_1010"/>
+        <Attribute name="hgnc_gene__ensembl_gene__ensembl_gene_id_104"/>
+        <Attribute name="hgnc_gene__ncbi_gene__gene_id_1026"/>
+        <Attribute name="hgnc_gene__ucsc__ucsc_gene_id_1035"/>
+        <Attribute name="hgnc_gene__refseq__refseq_accession_1031"/>
+        <Attribute name="hgnc_gene__ccds__ccds_accession_101"/>
+        <Attribute name="hgnc_gene__uniprot__uniprot_accession_1036"/>
+    </Dataset>
+</Query>

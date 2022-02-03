@@ -1,0 +1,43 @@
+version: 1
+
+formatters:
+  general:
+    (): "colorlog.ColoredFormatter"
+    datefmt: '%d/%m/%y %H:%M:%S'
+    format: '%(log_color)s%(asctime)s [%(name)s] %(levelname)s: %(message)s'
+  detailed:
+    (): "colorlog.ColoredFormatter"
+    datefmt: '%d/%m/%y %H:%M:%S'
+    format: "%(log_color)s%(asctime)s [%(name)s: %(detail)s] %(levelname)s: %(message)s"
+
+handlers:
+  general_tqdm:
+    class: "i_vis.core.utils.TqdmLoggingHandler"
+    level: DEBUG
+    formatter: general
+  detailed_tqdm:
+    class: "i_vis.core.utils.TqdmLoggingHandler"
+    level: DEBUG
+    formatter: detailed
+  log_file:
+    class: "logging.handlers.RotatingFileHandler"
+    filename: "cli.log"
+    maxBytes: 20000000
+    backupCount: 3
+    encoding: utf-8
+
+loggers:
+  i_vis:
+    level: DEBUG
+    handlers: [ detailed_tqdm, log_file ]
+    propagate: no
+  chembl_webresource_client:
+    level: WARNING
+  urllib3:
+    level: WARNING
+  requests_cache:
+    level: WARNING
+
+root:
+  level: DEBUG
+  handlers: [ general_tqdm, log_file ]

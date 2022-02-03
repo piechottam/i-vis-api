@@ -1,5 +1,0 @@
-.. extend-sources:
-
-Sources
-~~~~~~~
-
