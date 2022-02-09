@@ -264,7 +264,6 @@ class UpdatePlugin(Task):
 
         if not update and not self.required_rids.to_resources(context).dirty:
             return
-        breakpoint()
 
         with open(self.out_res.qname, "w") as f_out:
             f_out.write(str(plugin.version.current))

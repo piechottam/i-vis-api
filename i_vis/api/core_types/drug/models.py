@@ -4,8 +4,8 @@ from sqlalchemy.orm import declared_attr, declarative_mixin, Mapped
 from marshmallow_sqlalchemy import SQLAlchemyAutoSchema
 
 from . import (
-    DRUG_TNAME,
-    DRUG_NAMES_RAW_TNAME,
+    TNAME,
+    NAMES_TNAME,
     meta,
 )
 from ..utils import get_links
@@ -17,19 +17,19 @@ if TYPE_CHECKING:
     pass
 
 CHEMBL_MAX_LENGTH = 13
+CHEMBL_ID = "chembl_id"
 DRUG_NAME_MAX_LENGTH = 255
 DRUG_NAME_TYPE_MAX_LENGTH = 100
-CHEMBL_ID = "chembl_id"
 CHEMBL_PREFIX = "CHEMBL"
 
 
 class Drug(db.Model, ResDescMixin):
-    __tablename__ = DRUG_TNAME
+    __tablename__ = TNAME
 
     chembl_id = db.Column(db.String(CHEMBL_MAX_LENGTH), primary_key=True)
 
     names: Mapped[Sequence["DrugName"]] = db.relationship(
-        "DrugNameRaw", back_populates="drug"
+        "DrugName", back_populates="drug"
     )
 
 
@@ -51,7 +51,7 @@ class DrugMixin:
 
 
 class DrugName(db.Model, DrugMixin, ResDescMixin):
-    __tablename__ = DRUG_NAMES_RAW_TNAME
+    __tablename__ = NAMES_TNAME
     __table_args__ = (db.UniqueConstraint(CHEMBL_ID, "name"),)
     chembl_id_nullable = False
 

@@ -272,11 +272,19 @@ class CoreTypeDesc(LinksMixin, IdMixin, _Base):
 def harmonized_data() -> ma.Schema:
     new_fields: MutableMapping[str, Union[ma.Field, Type[ma.Field]]] = {}
     for core_type in CoreType.instances():
-        new_fields[core_type.blueprint_name.replace("-", "_")] = ma.Nested(
+        new_fields[core_type.clean_name] = ma.Nested(
             core_type.harm_meta.schema, many=True
         )
 
     return ma.Schema.from_dict(new_fields, name="HarmonizedData")
+
+
+@cache
+def processed_data() -> ma.Schema:
+    new_fields: MutableMapping[str, Union[ma.Field, Type[ma.Field]]] = {}
+    for core_type in CoreType.instances():
+        new_fields[core_type.clean_name] = ma.Str()
+    return ma.Schema.from_dict(new_fields, name="ProcessedData")
 
 
 @cache
@@ -285,11 +293,12 @@ def part_data() -> Type[ma.Schema]:
         data_source = fields.StrFunction(lambda part_data_: part_data_.get_etl().pname)
         part = ma.Str()
         raw_data = ma.Dict(keys=ma.Str(), values=ma.Str())
+        processed_data = ma.Nested(processed_data())
         harmonized_data = ma.Nested(harmonized_data())
 
         @staticmethod
         def get_id(data: "RawData") -> str:
-            return str(data.id)
+            return str(data.i_vis_id)
 
         @staticmethod
         def get_type(data: "RawData") -> str:

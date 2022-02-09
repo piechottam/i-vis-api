@@ -9,7 +9,7 @@ from i_vis.core.version import Default as DefaultVersion, Version
 from . import meta
 from .models import (
     CancerType,
-    CancerTypeNameRaw,
+    CancerTypeName,
     CancerTypeMixin,
     DO_ID,
     CANCER_TYPE_MAX_LENGTH,
@@ -148,7 +148,7 @@ class Plugin(CoreType):
         self.task_builder.load(
             in_rid=names_raw_file.rid,
             table=self.task_builder.res_builder.table_from_model(
-                model=CancerTypeNameRaw
+                model=CancerTypeName
             ),
         )
 

@@ -320,7 +320,7 @@ parquet_io = ParquetIO()
 
 tsv_io = TsvIO()
 csv_io = PandasDataFrameIO(read_callback="read_csv", to_callback="to_csv")
-json_io = PandasDataFrameIO(read_callback="read_json", to_opts={"indent": 2})
+json_io = PandasDataFrameIO(read_callback="read_json", to_callback="to_json", to_opts={"indent": 2})
 
 
 def normalize_columns_helper(s: str) -> str:

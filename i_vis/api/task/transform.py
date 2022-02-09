@@ -141,7 +141,8 @@ class BuildDict(Transform):
 
     def post_register(self) -> None:
         for rid in self.in_rids:
-            self.required_rids.add(rid)
+            if rid not in self.required_rids:
+                self.required_rids.add(rid)
         self.in_rids.close()
 
     def _do_work(self, context: "Resources") -> None:
@@ -250,6 +251,8 @@ class Process(Transform):
             df = pd.DataFrame()
         if isinstance(df, dd.DataFrame):
             df = df.map_partitions(self._process, context=context)
+        elif isinstance(df, pd.DataFrame):
+            df = self._process(df, context)
         else:
             df = pd.concat(df)
             df = self._process(df, context)
@@ -424,7 +427,7 @@ class HarmonizeRawData(Transform):
 
             cols = list(desc.cols)
             # TODO handle duplicate index
-            raw_table_data[core_type.name.replace("-", "_")] = df[cols].apply(
+            raw_table_data["i_vis_raw_" + core_type.clean_name] = df[cols].apply(
                 lambda x: ";".join(set(map(to_str, filter(None, x)))), axis=1
             )
             #

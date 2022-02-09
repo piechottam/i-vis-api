@@ -53,6 +53,7 @@ class EnsemblPlugin(DataSource):
         )
 
 
+# TODO add file description hgnc_id type name [data_sources]
 class FilterHgncMapping(Process):
     def _process(self, df: DataFrame, context: "Resources") -> DataFrame:
         # filter hgnc_ids: remove empty rows

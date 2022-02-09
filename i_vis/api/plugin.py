@@ -22,7 +22,7 @@ from logging import getLogger, LoggerAdapter
 from datetime import datetime
 from types import ModuleType
 from sqlalchemy.orm.decl_api import declared_attr
-from marshmallow.fields import FieldABC
+from marshmallow.base import FieldABC
 
 from i_vis.core.config import MissingVariable, get_ivis
 from i_vis.core.file_utils import clean_fname
@@ -864,13 +864,17 @@ class CoreType(BasePlugin, ABC):
     def blueprint_name(self) -> str:
         return CoreType.get_blueprint_name(self.meta)
 
+    @property
+    def clean_name(self) -> str:
+        return self.blueprint_name.replace("-", "_")
+
     @staticmethod
     def get_short_name(meta: "Meta") -> str:
         return meta.name.removeprefix("i-vis-")
 
     @staticmethod
     def get_blueprint_name(meta: "Meta") -> str:
-        s = meta.name.removeprefix("i-vis-")
+        s = CoreType.get_short_name(meta)
         if s.endswith("s"):
             return s
         return s + "s"

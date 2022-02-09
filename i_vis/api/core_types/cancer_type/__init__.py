@@ -10,4 +10,5 @@ meta = Meta(
 )
 
 TNAME = "cancer_types"
-NAMES_RAW_TNAME = "cancer_type_names_raw"
+NAMES_TNAME = "cancer_type_names"
+NAMES_PLUGIN_TNAME = "cancer_type_name_plugin"

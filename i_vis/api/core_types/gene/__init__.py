@@ -8,5 +8,6 @@ meta = Meta(
     fullname="I-VIS - gene",
     url="https://predict.hu-berlin.de",
 )
-GENE_TNAME = "genes"
-GENE_NAMES_TNAME = "gene_names"
+TNAME = "genes"
+NAMES_TNAME = "gene_names"
+NAME_PLUGIN_TNAME = "gene_name_plugin"

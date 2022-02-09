@@ -2,6 +2,8 @@ import os
 from typing import Any, Sequence, TYPE_CHECKING
 from functools import cached_property
 
+import pandas as pd
+
 from flask_marshmallow.fields import URLFor
 
 from i_vis.core.version import Default as DefaultVersion
@@ -22,12 +24,14 @@ from ...df_utils import tsv_io
 from ...harmonizer import Harmonizer, SimpleHarmonizer
 from ...plugin import CoreType, CoreTypeField, CoreTypeMeta
 from ...resource import ResourceId, ResourceIds, File
+from ...task.transform import Transform
 
 # from ...query import set_ops
 
 if TYPE_CHECKING:
     from ...terms import TermType
     from ... import db
+    from ...resource import Resources
 
 _mapping_rids = ResourceIds()
 
@@ -119,6 +123,7 @@ class Plugin(CoreType):
         from ...task.transform import BuildDict
         from ...data_sources.chembl import meta as chembl_meta, OTHER_MAPPINGS_FNAME
 
+
         drugs_file = self.task_builder.res_builder.file(
             fname="_drugs.tsv",
             io=tsv_io,
@@ -140,11 +145,20 @@ class Plugin(CoreType):
             target_id=CHEMBL_ID,
             id_prefix=CHEMBL_PREFIX,
         )
-        # Workaround - ChEMBL does not offer flat file - add ChEMBL entries "on demand"
-        build_dict_task.required_rids.add(
-            File.link(chembl_meta.name, OTHER_MAPPINGS_FNAME)
-        )
         self.task_builder.add_task(build_dict_task)
+
+        if False:
+            # Workaround - ChEMBL does not offer flat file - add ChEMBL entries "on demand"
+            build_dict_task.required_rids.add(
+                File.link(chembl_meta.name, OTHER_MAPPINGS_FNAME)
+            )
+
+            merged_chembl_mapping_file = self.task_builder.res_builder.file("_merged_mappings.tsv")
+            merge_mappings_task = MergeMappings(
+                mapping_rids=_mapping_rids,
+                out_file=merged_chembl_mapping_file
+            )
+            self.task_builder.add_task(merge_mappings_task)
 
         # load chembl drugs dictionary
         self.task_builder.load(
@@ -161,3 +175,21 @@ class Plugin(CoreType):
     @property
     def model(self) -> "db.Model":
         return Drug
+
+
+class MergeMappings(Transform):
+    def __init__(self, mapping_rids: ResourceIds, out_file: File) -> None:
+        super().__init__(offers=[out_file], requires=[])
+        self.mapping_rids = mapping_rids
+
+    def post_register(self) -> None:
+        for rid in self.mapping_rids:
+            if rid not in self.required_rids:
+                self.required_rids.add(rid)
+        self.mapping_rids.close()
+
+    def _do_work(self, context: "Resources") -> None:
+        dfs = [context[rid].read_full() for rid in self.required_rids]
+        df = pd.concat(dfs, ignore_index=True)
+        df = df.drop_duplicates()
+        self.out_res.save(df)

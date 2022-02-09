@@ -80,6 +80,19 @@ class ResDescMixin:
         return ResourceDesc.from_model(cast(db.Model, cls))
 
 
+class CoreTypeMixin(ResDescMixin):
+    """CoreType Model"""
+
+    @property
+    def related_data(self):
+        breakpoint()
+        raise NotImplementedError
+
+
+class CoreTypeModel(db.Model, CoreTypeMixin):
+    __abstract__ = True
+
+
 class RawDataMixin(ResDescMixin):
     """Mixin for raw data"""
 
@@ -100,19 +113,27 @@ class RawDataMixin(ResDescMixin):
     @cached_property
     def parquet(self) -> Parquet:
         etl = self.get_etl()
-        tname = etl.raw_model.__tablename__
-        path = "_" + tname
+        path = etl.raw_data_path
         pname = etl.pname
         rid = Parquet.link(pname=pname, name=path)
         parquet = cast(Parquet, rid.get())
         return parquet
 
-    def raw_data(self, ids: Sequence[int]) -> pd.DataFrame:
-        df = cast(dd.DataFrame, self.parquet.read())[ids].compute()
+    @property
+    def raw_data(self) -> Mapping[str, str]:
+        df = self.parquet.read().loc[self.i_vis_id]
+        return df.to_dict()
+
+    def get_raw_data(self, ids: Sequence[int]) -> pd.DataFrame:
+        df = cast(dd.DataFrame, self.parquet.read()).loc[ids]
         return cast(pd.DataFrame, df)
 
     @property
-    def harmonized_data(self) -> Mapping[str, Sequence[Any]]:
+    def harmonized_data(self) -> Mapping[str, Any]:
+        raise NotImplementedError
+
+    @property
+    def processed_data(self) -> Mapping[str, Any]:
         raise NotImplementedError
 
 

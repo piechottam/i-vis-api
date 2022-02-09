@@ -191,7 +191,7 @@ class Spec(ETLSpec):
             XmlToJson,
             task_opts={
                 "out_fname": "full_database.json",
-                "getter": lambda dt: dt["drugbank"]["dt"],
+                "getter": lambda dt: dt["drugbank"]["drug"],
             },
         )
 

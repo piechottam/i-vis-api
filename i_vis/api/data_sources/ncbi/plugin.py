@@ -21,7 +21,7 @@ from i_vis.core.utils import StatusCode200Error
 from . import meta
 from ... import terms as t
 from ...config_utils import get_config
-from ...df_utils import parquet_io
+from ...df_utils import TsvIO
 from ...etl import ETLSpec, Simple
 from ...plugin import DataSource
 from ...utils import VariableUrl as Url
@@ -81,7 +81,7 @@ class Plugin(DataSource):
 class Spec(ETLSpec):
     class Extract:
         url = Url(_URL_VAR, latest=True)
-        io = parquet_io
+        io = TsvIO()
         add_id = True
 
         class Raw:

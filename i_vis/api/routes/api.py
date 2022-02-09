@@ -291,7 +291,6 @@ def _create_part_browse_view(
             core_type2kwargs = parse_core_types_args(list(etl.core_types), query_args)
             raw_model = etl.raw_model
 
-            db_query = None
             variant_core_type = CoreType.get_by_target("hgvs")
             if (
                 variant_core_type
@@ -326,7 +325,7 @@ def _create_part_browse_view(
                 )
 
             return QueryWrapper(
-                column=etl.raw_model.id,
+                column=etl.raw_model.i_vis_id,
                 query=db_query,
                 links={
                     "self": url_for(

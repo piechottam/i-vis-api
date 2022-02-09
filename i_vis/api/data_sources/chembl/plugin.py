@@ -111,7 +111,7 @@ class Plugin(DataSource):
         self.task_builder.add_task(
             RetrieveOther(
                 chembl_drugs_file_id=chembl_drugs_file.rid,
-                chembl_mapping_file_id=File.link(drug_meta.name, "chembl_mapping.tsv"),
+                chembl_mapping_file_id=File.link(drug_meta.name, "_merged_mappings.tsv"),
                 out_file=other_entries_file,
             )
         )
@@ -122,7 +122,7 @@ class Plugin(DataSource):
         )
         self.task_builder.add_task(
             ConvertJSON(
-                in_file_rid=other_entries_file.rid, out_file=other_mappings_file
+                in_rid=other_entries_file.rid, out_res=other_mappings_file
             )
         )
         add_chembl_mapping_rid(other_mappings_file.rid)
@@ -251,9 +251,6 @@ class RetrieveOther(Extract):
 
 
 class ConvertJSON(Process):
-    def __init__(self, in_file_rid: "ResourceId", out_file: "File") -> None:
-        super().__init__(in_file_rid=in_file_rid, out_res=out_file)
-
     def _process(self, df: "AnyDataFrame", context: "Resources") -> "AnyDataFrame":
         from ...core_types.drug.models import CHEMBL_PREFIX
 

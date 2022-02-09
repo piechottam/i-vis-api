@@ -626,8 +626,16 @@ class ETL:
 
         def harmonized_data(self_: Any) -> Mapping[str, Any]:
             return {
-                core_type.blueprint_name.replace("-", "_"): getattr(
-                    self_, f"harmonized_{core_type.short_name}"
+                core_type.clean_name: getattr(
+                    self_, f"harmonized_{core_type.clean_name}"
+                )
+                for core_type in self.core_types
+            }
+
+        def processed_data(self_: Any) -> Mapping[str, Any]:
+            return {
+                core_type.clean_name: getattr(
+                    self_, f"i_vis_raw_{core_type.clean_name}"
                 )
                 for core_type in self.core_types
             }
@@ -641,9 +649,10 @@ class ETL:
             "__tablename__": raw_tname(self.pname, self.part_name),
             "get_etl": classmethod(lambda cls: self),
             "harmonized_data": property(harmonized_data),
+            "processed_data": property(processed_data),
         }
         for core_type in self.core_types:
-            attrs[core_type.name.replace("-", "_")] = db.Column(db.Text)
+            attrs[f"i_vis_raw_{core_type.blueprint_name.replace('-', '_')}"] = db.Column(db.Text)
 
         # container for all raw columns
         column_container = merge_column_container(
@@ -694,7 +703,7 @@ class ETL:
             ),
             "raw_data": db.relationship(
                 self.raw_model,
-                backref=backref(f"harmonized_{core_type.short_name}", lazy="joined"),
+                backref=backref(f"harmonized_{core_type.blueprint_name.replace('-', '_')}", lazy="joined"),
             ),
             "get_core_type": classmethod(lambda cls: core_type),
             "get_etl": classmethod(lambda cls: self),

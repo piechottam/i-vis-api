@@ -5,17 +5,17 @@ from sqlalchemy.orm import declared_attr, declarative_mixin, Mapped
 from . import meta
 from ..utils import get_links
 from ... import db, ma
-from ...db_utils import ResDescMixin
+from ...db_utils import ResDescMixin,  CoreTypeMixin
 from ...fields import StrDictMethod
 
 HGNC_MAX_LENGTH = 12
+HGNC_ID = "hgnc_id"
 GENE_NAME_MAX_LENGTH = 255
 GENE_NAME_TYPE_MAX_LENGTH = 100
-HGNC_ID = "hgnc_id"
 HGNC_PREFIX = "HGNC:"
 
 
-class Gene(db.Model, ResDescMixin):
+class Gene(db.Model, CoreTypeMixin):
     __tablename__ = "genes"
 
     hgnc_id = db.Column(db.String(HGNC_MAX_LENGTH), primary_key=True)
@@ -29,9 +29,6 @@ class Gene(db.Model, ResDescMixin):
     names: Mapped[Sequence["GeneName"]] = db.relationship(
         "GeneName", back_populates="gene"
     )
-
-    # TODO reference raw_data, by data_source
-    # raw_data
 
 
 @declarative_mixin

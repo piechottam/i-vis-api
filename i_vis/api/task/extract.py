@@ -417,4 +417,5 @@ def create_task(url: str, out_file: "File", **kwargs: Any) -> Extract:
         create = scheme2create[scheme]
     except KeyError as e:
         raise Exception(f"Unknown scheme: '{scheme}' in url: '{url}'") from e
+
     return create(url, out_file, **kwargs)  # type: ignore

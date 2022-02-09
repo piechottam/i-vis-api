@@ -9,8 +9,6 @@ meta = Meta(
     api_prefix="drugs",
 )
 
-DRUG_TNAME = "drugs"
-DRUG_NAMES_RAW_TNAME = "drug_names_raw"
-DRUG_NAMES_TRANSFORMED_TNAME = "drug_names_transformed"
-DRUG_NAMES_PLUGIN_TNAME = "drug_name_plugin"
-DRUG_NAMES_SECONDARY_TNAME = "drug_names_secondary"
+TNAME = "drugs"
+NAMES_TNAME = "drug_names"
+NAMES_PLUGIN_TNAME = "drug_name_plugin"

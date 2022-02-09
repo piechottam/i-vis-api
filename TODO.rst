@@ -1,30 +1,32 @@
-mypy options --ignore-missing-imports --warn-unused-configs --disallow-any-generics --disallow-untyped-calls
---disallow-untyped-defs --disallow-incomplete-defs --check-untyped-defs --no-implicit-optional --warn-redundant-casts --warn-unused-ignores --warn-return-any --strict-equality
-
+# Wendesday
+* active task in tqdm
+* parallel computing
+* stop on mfirst exception
+* check code TODOs
+* id <-> name <-> name
+* force
 
 # TODO
+* PaginationMetadata in header
+* pathway
+* evidence
+* tissue
+* oncotree
 
-## Entities
-![entities](entities.png)
+# Search
+* Search raw and normalized data.
+* entity and
+* exposed
 
-### IDs for entities
-
-Variant:
-* HGVS notation: DNA, RNA, protein
-* genomic coordinates (planned)
-* dbSNP (planned)
-
-Gene:
-* HGNC id
-
-Drug:
-* CHEMBL ID
+Cancer (Disease):
+* Add do_id
 
 Pathway:
 * Reactome(planned)
 
-Cancer (Disease):
-* Disease Ontology (Cancer subtree DOID:162 and only first two levels)
+
+## Entities
+![entities](entities.png)
 
 ### Variants
 ![variant_type](variant_types.png)
@@ -41,8 +43,6 @@ Ontology (TODO):
 * Multi nucleotide variation
 * insertion (Ins)
 * deletion (Del)
-
-# Design
 
 ## Version management
 Data sources and I-VIS data integration. API will change in the future. 
@@ -92,30 +92,17 @@ The subprocesses from ETL and the following task will be represented by the Clas
 
 * source (Values: [biomarkers: PMID:26924578, ASCO 2015 (abstr 11010), ENA 2014 (abstr 428), FDA, EMA, NCT02186821, etc.])
 
-* tumor type -> diesase ontology
-
-- name
-- primary
-- metastatic
-
 # TODO
 class GenomePositionMixin:
-contig = db.Column(db.String(255), nullable=False)
-start = db.Column(db.Integer, nullable=False)
-end = db.Column(db.Integer, nullable=False)
-strand = db.Column(db.Integer, nullable=False)
-assembly = db.Column(db.Enum(GenomeAssembly), nullable=False)
-
-# TODO
-# pathway
-# evidence
-# tissue
-# oncotree
-
+    contig = db.Column(db.String(255), nullable=False)
+    start = db.Column(db.Integer, nullable=False)
+    end = db.Column(db.Integer, nullable=False)
+    strand = db.Column(db.Integer, nullable=False)
+    assembly = db.Column(db.Enum(GenomeAssembly), nullable=False)
 
 # Planned Features
 ## Guess Raw data
-Given a fiel try to identify and assign columns to entities: gene, variant, etc...
+Given a file try to identify and assign columns to entities: gene, variant, etc...
 ::
     @app_group.command("guess", short_help="Guess mapping.")
     @click.argument("res-id", nargs=1, callback=validate_res_id)
@@ -131,46 +118,3 @@ Given a fiel try to identify and assign columns to entities: gene, variant, etc.
         for col in df.columns:
             print(f"    '{col}': a.Unknown,")
         print("}")
-
-
-# Search
-
-Search raw and normalized data.
-Howto aggregate? 
-
-Search by:
-* entity and
-* exposed
-
-
-Plugins
--------
-
-.. toctree::
-
-    plugins/core
-    plugins/sources
-
-
-.. cli:
-
-CLI App
--------
-
-CLI TODO
-
-.. toctree::
-
-    cli_app/plugin
-
-.. _extending:
-
-Extending
----------
-
-.. toctree::
-
-    extend/core
-    extend/sources
-
-
