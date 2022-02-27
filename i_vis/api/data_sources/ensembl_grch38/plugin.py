@@ -36,7 +36,8 @@ class Plugin(EnsemblPlugin):
         )
 
     def _init_tasks(self) -> None:
-        from .ensembl import FilterHgncMapping
+        from .ensembl import HgncMapping
+        from ...core_types.gene.models import gene_name_res_desc
 
         super()._init_tasks()
         for etl in self.etl_manager.part2etl.values():
@@ -48,10 +49,11 @@ class Plugin(EnsemblPlugin):
             mapping_file = self.task_builder.res_builder.file(
                 fname=prefix_fname(fname, "_hgnc_id-dict"),
                 io=tsv_io,
+                desc=gene_name_res_desc,
             )
             add_hgnc_mapping_rid(mapping_file.rid)
             self.task_builder.add_task(
-                FilterHgncMapping(
+                HgncMapping(
                     in_rid=File.link(self.name, fname),
                     out_res=mapping_file,
                 )
@@ -68,6 +70,7 @@ class GeneInfo(ETLSpec):
         )
         out_fname = "gene_info.tsv"
         io = tsv_io
+        add_id = True
 
         class Raw:
             chromosome_scaffold_name = Simple(terms=[t.Chromosome])
@@ -88,6 +91,7 @@ class EnsemblGeneId(ETLSpec):
         )
         out_fname = "ensembl_gene_id.tsv"
         io = tsv_io
+        add_id = True
 
         class Raw:
             hgnc_id = Simple(terms=[t.HGNCid()])
@@ -107,6 +111,7 @@ class EnsemblTranscriptId(ETLSpec):
         )
         out_fname = "ensembl_transcript_id.tsv"
         io = tsv_io
+        add_id = True
 
         class Raw:
             hgnc_id = Simple(terms=[t.HGNCid()])
@@ -126,6 +131,7 @@ class EnsemblProteinId(ETLSpec):
         )
         out_fname = "ensembl_peptide_id.tsv"
         io = tsv_io
+        add_id = True
 
         class Raw:
             hgnc_id = Simple(terms=[t.HGNCid()])

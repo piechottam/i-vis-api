@@ -8,7 +8,3 @@ meta = Meta(
     url="https://predict.hu-berlin.de",
     api_prefix="drugs",
 )
-
-TNAME = "drugs"
-NAMES_TNAME = "drug_names"
-NAMES_PLUGIN_TNAME = "drug_name_plugin"

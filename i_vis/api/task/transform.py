@@ -28,23 +28,20 @@ import pyarrow as pa
 from cyvcf2 import VCF
 
 from i_vis.core.config import get_ivis
-from i_vis.core.file_utils import change_suffix
 
 from .base import Task, TaskType
 from ..df_utils import (
     sort_prefixed,
     add_id,
-    RAW_DATA_ID,
+    RAW_DATA_FK,
     loc,
-    PD_TO_CSV_OPTS,
     ParquetIO,
     DataFrameIO,
     convert_to_parquet,
-    json_io,
     clean_df,
 )
 from ..resource import File, Parquet
-from ..db_utils import PK
+from ..db_utils import RAW_DATA_PK
 from ..utils import to_str
 
 
@@ -110,7 +107,7 @@ class BuildDict(Transform):
         self,
         in_rids: "ResourceIds",
         entities: File,
-        names_raw: File,
+        names: File,
         target_id: str,
         max_name_length: int = 255,
         max_type_length: int = 255,
@@ -125,7 +122,7 @@ class BuildDict(Transform):
             requires=requires,
             offers=[
                 entities,
-                names_raw,
+                names,
             ],
         )
 
@@ -133,7 +130,7 @@ class BuildDict(Transform):
         self.in_rids = in_rids
 
         self.entities = entities
-        self.names_raw = names_raw
+        self.names = names
         self.target_id = target_id
         self.max_name_length = max_name_length
         self.max_type_length = max_type_length
@@ -175,17 +172,19 @@ class BuildDict(Transform):
                 f"{sum(too_long_name)} removed too long (>{self.max_name_length}) name(s)"
             )
         # types that are TOO long
-        too_long_type = cast(pd.Series, df["type"].str.len() > self.max_type_length)
-        if too_long_type.any():
-            df = df[~too_long_type]
-            self.logger.info(
-                f"{sum(too_long_type)} removed too long (>{self.max_type_length}) type(s)"
-            )
+        if "type" in df.columns:
+            too_long_type = cast(pd.Series, df["type"].str.len() > self.max_type_length)
+            if too_long_type.any():
+                df = df[~too_long_type]
+                self.logger.info(
+                    f"{sum(too_long_type)} removed too long (>{self.max_type_length}) type(s)"
+                )
 
         df = sort_prefixed(df, self.target_id, self.id_prefix)
 
         # store entities
         entities = pd.DataFrame({self.target_id: df[self.target_id].unique()})
+        entities = add_id(entities, "id")
 
         self.logger.info(f"{len(entities)} unique {self.target_id} entities")
         self.entities.save(entities, logger=self.logger)
@@ -195,16 +194,23 @@ class BuildDict(Transform):
 
         # store transformed names
         # aggregate plugins for future use
-        df_raw_names = (
-            df[[self.target_id, "name", "type", "data_sources"]]
+        agg = {
+            "data_sources": ",".join,
+        }
+        cols = [self.target_id, "name", "data_sources"]
+        if "type" in df.columns:
+            agg["type"] = ",".join
+            cols.append("type")
+        df_names = (
+            df[cols]
             .drop_duplicates()
             .groupby([self.target_id, "name"], as_index=False)
-            .agg({"data_sources": ",".join, "type": ",".join})
+            .agg(agg)
         )
-        df_raw_names = add_id(df_raw_names, col="id")
-        self.logger.info(f"{len(df_raw_names)} unique {self.target_id} <-> raw names")
-        self.names_raw.save(
-            df_raw_names[["id", self.target_id, "type", "name", "data_sources"]],
+        df_names = add_id(df_names, col="id")
+        self.logger.info(f"{len(df_names)} unique {self.target_id} <-> raw names")
+        self.names.save(
+            df_names[["id"] + cols],
             logger=self.logger,
         )
 
@@ -276,6 +282,8 @@ class Process(Transform):
 
 
 class HarmonizeRawData(Transform):
+    """Harmonize data"""
+
     # pylint: disable=too-many-arguments
     def __init__(
         self,
@@ -289,9 +297,6 @@ class HarmonizeRawData(Transform):
         self._in_rid = in_rid
         offers = [out_res] + list(chain.from_iterable(harm_desc2files.values()))
         self._out_res = out_res
-
-        self._save_opts = dict(PD_TO_CSV_OPTS)
-        self._save_opts.update(kwargs.pop("save", {}))
 
         core_types = [harm_desc.core_type for harm_desc in harm_desc2files.keys()]
         kwargs["name_args"] = (core_type.short_name for core_type in core_types)
@@ -319,15 +324,11 @@ class HarmonizeRawData(Transform):
     # pylint: disable=too-many-locals
     def _do_work(self, context: "Resources") -> None:
         if not self.harm_files:
-            self.logger.warning("Nothing to harmonize.")
-            return
+            self.logger.info("Nothing to harmonize.")
 
         core_types = [
             core_type for core_type in self.harm_files.keys() if core_type.installed
         ]
-        if not core_types:
-            self.logger.warning("No Core Type installed - nothing to harmonized to.")
-            return
 
         in_file = context[self.in_rid]
         df = in_file.read()
@@ -336,7 +337,6 @@ class HarmonizeRawData(Transform):
         else:
             cores = int(get_ivis("CORES"))
             if cores > 1:
-                # TODO  make this a nice context manager
                 with dask.config.set(
                     {
                         "scheduler": "processes",
@@ -356,6 +356,7 @@ class HarmonizeRawData(Transform):
 
     # pylint: disable=too-many-locals
     def _do_dask_work(self, df: dd, core_types: Sequence["CoreType"]) -> None:
+        breakpoint()
         for core_type in core_types:
             harmonizer = core_type.harmonizer
             desc = self.harm_descs[core_type]
@@ -371,12 +372,12 @@ class HarmonizeRawData(Transform):
                 df = df.map_partitions(harm_modifier.modifier)
 
             cols = list(desc.cols)
-            df = df[[PK] + cols].rename(columns={PK: RAW_DATA_ID})
+            df = df[[RAW_DATA_PK] + cols].rename(columns={RAW_DATA_PK: RAW_DATA_FK})
             result = df.map_partitions(harmonizer.harmonize, cols=cols)
             harmonized = result.map_partitions(harmonizer.harmonized)
             not_harmonized = result.map_partitions(harmonizer.not_harmonized)
             targets = list(core_type.harm_meta.targets)
-            harmonized = harmonized[[RAW_DATA_ID] + targets]
+            harmonized = harmonized[[RAW_DATA_FK] + targets]
 
             harmonized.map_partitions(sort_by_targets, targets=targets, meta=harmonized)
 
@@ -387,26 +388,13 @@ class HarmonizeRawData(Transform):
             for df_, files in objs:
                 file = files[core_type]
                 file.save(df_)
-                # TODO remove
-                # fnames = df_.to_csv(
-                #    file_id.qname + "-dask/*.tsv.gz",
-                #    compute=True,
-                #    compression="gzip",
-                #    header_first_partition_only=True,
-                #    index=False,
-                #    sep="\t",
-                # )
-                # _ = merge_files(
-                #    in_fnames=fnames,
-                #    out_fname=file_id.qname,
-                #    deduplicate=[RAW_DATA_ID] + targets,
-                # )
 
     def _do_pandas_work(
         self, raw_data: pd.DataFrame, core_types: Sequence["CoreType"]
     ) -> None:
+        # TODO add exposed data
         raw_table_data = pd.DataFrame(
-            columns=[core_type.name.replace("-", "_") for core_type in core_types],
+            columns=["i_vis_raw_" + core_type.clean_name for core_type in core_types],
             index=raw_data.index.copy(),
             dtype="str",
         ).fillna("")
@@ -426,26 +414,25 @@ class HarmonizeRawData(Transform):
                 df = harm_modifier.modifier(df)
 
             cols = list(desc.cols)
-            # TODO handle duplicate index
             raw_table_data["i_vis_raw_" + core_type.clean_name] = df[cols].apply(
                 lambda x: ";".join(set(map(to_str, filter(None, x)))), axis=1
             )
-            #
             df.reset_index(inplace=True)
-            df = df[[PK] + cols].rename(columns={PK: RAW_DATA_ID})
+            breakpoint()
+            df = df[[RAW_DATA_PK] + cols].rename(columns={RAW_DATA_PK: RAW_DATA_FK})
             result = harmonizer.harmonize(df=df, cols=cols)
             is_harmonized = harmonizer.is_harmonized(result)
             harmonized = result[is_harmonized]
             not_harmonized = result[~is_harmonized]
             targets = list(core_type.harm_meta.targets)
-            harmonized = harmonized[[RAW_DATA_ID] + targets]
+            harmonized = harmonized[[RAW_DATA_FK] + targets]
             harmonized = harmonized.sort_values(
-                by=[RAW_DATA_ID] + targets, ignore_index=True
+                by=[RAW_DATA_FK] + targets, ignore_index=True
             )
             # remove duplicate mappings
             if core_type.harmonizer.deduplicate:
                 harmonized = harmonized.drop_duplicates(
-                    subset=[RAW_DATA_ID] + targets,
+                    subset=[RAW_DATA_FK] + targets,
                     ignore_index=True,
                 )
 
@@ -460,31 +447,31 @@ class HarmonizeRawData(Transform):
 
 
 def sort_by_targets(df: "AnyDataFrame", targets: Sequence[str]) -> "AnyDataFrame":
-    return df.sort_values(by=[RAW_DATA_ID] + list(targets), ignore_index=True)
+    return df.sort_values(by=[RAW_DATA_FK] + list(targets), ignore_index=True)
 
 
-class XmlToJson(BaseModifier):
-
+class ConvertXML(BaseModifier):
     # pylint: disable=too-many-arguments
     def __init__(
-        self,
-        in_rid: "ResourceId",
-        getter: Callable[[Dict[Any, Any]], Dict[Any, Any]],
-        out_fname: str = "",
-        to_json: Optional[Mapping[str, Any]] = None,
-        **kwargs: Any,
+            self,
+            in_rid: "ResourceId",
+            getter: Callable[[Dict[Any, Any]], Dict[Any, Any]],
+            io: DataFrameIO,
+            out_fname: str,
+            to_opts: Optional[Mapping[str, Any]] = None,
+            add_id: bool = False,
+            **kwargs: Any,
     ) -> None:
-        kwargs["io"] = json_io
+        kwargs["io"] = io
         super().__init__(
             in_rid,
-            out_fname=out_fname or change_suffix(in_rid.name, ".json"),
+            out_fname=out_fname,
             **kwargs,
         )
 
         self.getter = getter
-        opts = dict(to_json) if to_json else {}
-        opts.setdefault("indent", 2)
-        self.to_json = opts
+        self.to_opts = to_opts or {}
+        self.add_id = add_id
 
     def _do_work(self, context: "Resources") -> None:
         in_file = context.file(self.in_rid)
@@ -493,7 +480,10 @@ class XmlToJson(BaseModifier):
             dt = xmltodict.parse(xml)
             del xml
             df = pd.DataFrame(self.getter(dt))
-            self.out_res.save(df, logger=self.logger, **self.to_json)
+            if self.add_id:
+                df = add_id(df, RAW_DATA_PK)
+                df.set_index(RAW_DATA_PK, drop=True, inplace=True)
+            self.out_res.save(df, logger=self.logger, **self.to_opts)
 
 
 class ConvertToParquet(Transform):
@@ -501,7 +491,7 @@ class ConvertToParquet(Transform):
         self,
         in_file_id: "ResourceId",
         out_parquet: "Parquet",
-        col: str = PK,
+        col: str = RAW_DATA_PK,
         **kwargs: Any,
     ):
         super().__init__(requires=[in_file_id], offers=[out_parquet], **kwargs)
@@ -685,7 +675,7 @@ class Parser:
 
     def schema(self, df: pd.DataFrame) -> pa.Schema:
         schema_ = {
-            PK: pa.int64(),
+            RAW_DATA_PK: pa.int64(),
         }
         for col in df.columns:
             if col in self.key2parse:
@@ -743,10 +733,10 @@ class Parser:
             if header_info["Number"] == "A"
         ]
         df = df.explode(column=cols + ["i_vis_alt"], ignore_index=True)  # type: ignore
-        df[PK] = pd.Series(
+        df[RAW_DATA_PK] = pd.Series(
             range(variant_count, variant_count + len(df) + 1), dtype="int64"
         )
-        df.set_index(PK, inplace=True, drop=True)
+        df.set_index(RAW_DATA_PK, inplace=True, drop=True)
         return df
 
     @cached_property
@@ -773,34 +763,10 @@ class Parser:
         return key2parse_
 
 
-# TODO
-# fname
-# add processsing
-## add ID
-# class ConvertVCF(BaseModifier):
-#    def __init__(
-#            self,
-#            in_rid: "ResourceId",
-#            col: str = PK,
-#            out_fname: str = "",
-#            io: Optional["DataFrameIO"] = None,
-#            desc: Optional["ResourceDesc"] = None,
-#            **kwargs: Any,
-#    ) -> None:
-#        super().__init__(
-#            ouf_fname=out_fname
-#                      or prefix_fname(change_suffix(in_rid.name, ""), "_parquet"),
-#            reader=reader or ParquetReader(),
-#            desc=desc,
-#            **kwargs,
-#
-#
-#
-
 ProcessVCF = Callable[[pd.DataFrame, Parser], pd.DataFrame]
 
 
-class MergedRawData(Transform):
+class MergeRawData(Transform):
     def __init__(self, in_res_ids: Sequence["ResourceId"], out_file: "File") -> None:
         super().__init__(offers=[out_file], requires=in_res_ids)
 
@@ -812,11 +778,15 @@ class MergedRawData(Transform):
 
 class VCF2Dataframe(Transform):
     def __init__(
-        self, in_file_id: "ResourceId", process: Optional[ProcessVCF] = None
+        self,
+        in_rid: "ResourceId",
+        desc: "ResourceDesc",
+        process: Optional[ProcessVCF] = None,
+        io: Optional[ParquetIO] = None,
     ) -> None:
-        path = "_" + in_file_id.name
-        out_parquet = Parquet(in_file_id.pname, path=path, io=ParquetIO())
-        super().__init__(offers=[out_parquet], requires=[in_file_id])
+        path = "_" + in_rid.name
+        out_parquet = Parquet(in_rid.pname, path=path, io=io or ParquetIO(), desc=desc)
+        super().__init__(offers=[out_parquet], requires=[in_rid])
         self.process = process
 
     def _do_work(self, context: "Resources") -> None:

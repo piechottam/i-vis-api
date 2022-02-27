@@ -198,9 +198,3 @@ class Spec(ETLSpec):
     class Transform:
         task = Modifier(FilterUnknown)
         variant = HarmonizerModifier(add_hgvs_c, i_vis_hgvs_c=Simple(terms=[t.HGVSc()]))
-
-
-# TODO
-# verify HarmonizerModifier i_vis + col exist
-# convert add_id to _raw_etl
-# store raw_value in _raw_etl.tsv

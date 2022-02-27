@@ -32,12 +32,12 @@ from . import meta
 from ... import terms as t
 from ...config_utils import get_config
 from ...core_types.drug.plugin import add_chembl_mapping_rid
-from ...df_utils import i_vis_col, tsv_io
+from ...df_utils import i_vis_col, tsv_io, flat_parquet_io
 from ...etl import ETLSpec, Simple, Modifier
 from ...plugin import DataSource
 from ...plugin_exceptions import LatestUrlRetrievalError
-from ...resource import File
-from ...task.transform import Process, XmlToJson
+from ...resource import Parquet
+from ...task.transform import Process, ConvertXML
 from ...utils import DynamicUrl as Url
 
 if TYPE_CHECKING:
@@ -88,10 +88,9 @@ class Plugin(DataSource):
             io=tsv_io,
         )
         add_chembl_mapping_rid(chembl_mapping_file.rid)
-
         self.task_builder.add_task(
             FilterChEMBLMapping(
-                in_rid=File.link(self.name, "full_database.json"),
+                in_rid=Parquet.link(self.name, "_" + meta.name + ".parquet"),
                 out_res=chembl_mapping_file,
             )
         )
@@ -149,8 +148,6 @@ def extract_chembl_wrapper(df: DataFrame, col: str) -> DataFrame:
     return df
 
 
-# TODO move to transform
-# parametrize with DataFrame(dt["drugbank"]["drug"]),
 class FilterChEMBLMapping(Process):
     def _process(self, df: DataFrame, context: "Resources") -> DataFrame:
         new_df = DataFrame()
@@ -165,8 +162,7 @@ class FilterChEMBLMapping(Process):
             value_name="name",
         ).drop(columns="name_type")
         new_df = new_df.explode("chembl_id").dropna().drop_duplicates()
-        new_df["plugins"] = meta.name
-
+        new_df["data_sources"] = meta.name
         return new_df
 
 
@@ -188,10 +184,12 @@ class Spec(ETLSpec):
 
     class Transform:
         task = Modifier(
-            XmlToJson,
+            ConvertXML,
             task_opts={
-                "out_fname": "full_database.json",
+                "out_fname": "_" + meta.name + ".parquet",
+                "io": flat_parquet_io,
                 "getter": lambda dt: dt["drugbank"]["drug"],
+                "add_id": True
             },
         )
 

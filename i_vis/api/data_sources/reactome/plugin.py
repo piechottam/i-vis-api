@@ -107,6 +107,7 @@ class Spec(ETLSpec):
                 ]
             }
         )
+        add_id = True
 
         class Raw:
             ensembl_gene_id = Simple(

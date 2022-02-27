@@ -7,6 +7,7 @@ from typing import (
     cast,
     MutableMapping,
     MutableSet,
+    MutableSequence,
     NewType,
     Optional,
     Set,
@@ -16,6 +17,7 @@ from typing import (
     TYPE_CHECKING,
 )
 
+from functools import cached_property
 import sys
 from flask import current_app
 from dask.callbacks import Callback
@@ -43,27 +45,31 @@ _TaskMapper = MutableMapping[str, "Task"]
 _TargetMapper = MutableMapping[str, Target]
 
 
-class ProgressBar:
+class TQDMProgressBar(Callback):
     def __init__(self, **kwargs: Any) -> None:
-        self._pb = None
-        self._kwargs = kwargs
+        self.tqdm = None
+        self.tqdm_opts = kwargs
 
-    def start(self, dsk: Mapping[str, Tuple[Any]]) -> None:
-        self._pb = tqdm(total=len(dsk), **self._kwargs, leave=False)
+    def _start(self, dsk: Mapping[str, Tuple[Any]]) -> None:
+        self.tqdm = tqdm(total=len(dsk), **self.tqdm_opts, leave=False)
+
+    # pylint: disable=unused-argument
+    def _pretask(self, key, dsk: Mapping[str, Any], state: Any) -> None:
+        assert self.tqdm is not None
+        self.tqdm.set_description_str(key)
 
     # pylint: disable=unused-argument
     # pylint: disable=too-many-arguments
-    def posttask(
+    def _posttask(
         self,
         key: str,
         result: Any,
         dsk: Mapping[str, Tuple[Any]],
         state: Any,
-        id_: Any,
+        worker_id: Any,
     ) -> None:
-        assert self._pb is not None
-        self._pb.set_description_str(key)
-        self._pb.update(1)
+        assert self.tqdm is not None
+        self.tqdm.update(1)
 
 
 class Workflow:
@@ -73,7 +79,7 @@ class Workflow:
     ) -> None:
         self._rules = rules
 
-    @property
+    @cached_property
     def dask_graph(
         self,
     ) -> Dict[Target, Union[Any, Tuple[Task, Sequence[Target]]]]:
@@ -86,16 +92,18 @@ class Workflow:
 
     def pprint(self) -> None:
         """Print workflow"""
-
         pp.pprint(self.dask_graph)
 
     def run(self, run: Run, workers: int, cores: int) -> "Resources":
         """Execute workflow"""
 
-        pb = ProgressBar(position=0, unit="tasks")
-        with Callback(start=pb.start, posttask=pb.posttask):
+        with TQDMProgressBar(position=0, unit="tasks"):
             graph = self.dask_graph
             graph[Builder.value_target("run")] = run
+
+            self.check_required("i-vis-db")
+            self.check_cycle("i-vis-db")
+
             if workers == 1:
                 result = dask_single_get(graph, DEFAULT_TARGET)
             else:
@@ -108,6 +116,34 @@ class Workflow:
                 result = client.get(graph, DEFAULT_TARGET)
             logger.info("Finished workflow")
         return cast("Resources", result)
+
+    def check_required(self, target: str) -> None:
+        if not isinstance(self.dask_graph[target], tuple):
+            return
+
+        _, *required_targets = self.dask_graph[target]
+        for required_target in required_targets:
+            if required_target not in self.dask_graph:
+                raise Exception(
+                    f"Missing requirement: {target} requires {required_target}"
+                )
+
+    # TODO change to non-recursive
+    def check_cycle(
+        self, target: str, path_targets: Optional[MutableSequence[str]] = None
+    ) -> None:
+        path_targets = path_targets or []
+
+        if isinstance(self.dask_graph[target], tuple):
+            _, *required_targets = self.dask_graph[target]
+            path_targets.append(target)
+            for required_target in required_targets:
+                if required_target in path_targets:
+                    raise Exception(
+                        f"Cycle {required_target}: {' -> '.join(path_targets)}"
+                    )
+
+                self.check_cycle(cast(str, required_target), list(path_targets))
 
 
 class _Rule:

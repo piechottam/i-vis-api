@@ -1,7 +1,3 @@
-# TODO
-# * fix biomarkers
-# *
-
 from typing import (
     Any,
     Callable,
@@ -42,13 +38,14 @@ from .db_utils import (
     HarmonizedData,
     RawDataMixin,
     RawData,
-    PK,
+    RAW_DATA_PK,
 )
 from .terms import Term, TermType, TermTypes
 from .utils import BaseUrl
 from .plugin import CoreType, BasePlugin, UpdateManager
-from .df_utils import RAW_DATA_ID
+from .df_utils import RAW_DATA_FK
 from .resource import Parquet
+from .config_utils import CHUNKSIZE
 
 if TYPE_CHECKING:
     from .task.base import Task
@@ -246,10 +243,8 @@ class ExtractOpts:
             return None
 
         add_id_opts = {
-            "col": PK,
-            "read_opts": {
-                "chunksize": get_ivis("CHUNKSIZE", 150000),
-            },
+            "col": RAW_DATA_PK,
+            "read_opts": {"chunksize": get_ivis("CHUNKSIZE", CHUNKSIZE)},
         }
         if isinstance(self._add_id, bool):
             pass
@@ -307,7 +302,7 @@ class TransformOpts:
             try:
                 _ = core_type.short_name
             except AttributeError:
-                pass  # breakpoint()
+                pass
 
             name = core_type.short_name.replace("-", "_")
             if not hasattr(opts, name):
@@ -319,11 +314,16 @@ class TransformOpts:
                 names.add(name)
 
         # check only supported options are present
+        short_names = [
+            CoreType.get(pname).short_name
+            for pname in CoreType.pnames(include_disabled=True)
+        ]
         for attr in vars(opts):
             if (
                 not attr.startswith("__")
                 and attr not in TRANSFORM_OPTS_ATTRS
                 and attr not in names
+                and attr not in short_names
             ):
                 raise UnknownOptionError(attr)
 
@@ -652,7 +652,9 @@ class ETL:
             "processed_data": property(processed_data),
         }
         for core_type in self.core_types:
-            attrs[f"i_vis_raw_{core_type.blueprint_name.replace('-', '_')}"] = db.Column(db.Text)
+            attrs[
+                f"i_vis_raw_{core_type.blueprint_name.replace('-', '_')}"
+            ] = db.Column(db.Text)
 
         # container for all raw columns
         column_container = merge_column_container(
@@ -698,12 +700,15 @@ class ETL:
         # attributes for mapped class
         attrs: Dict["str", Any] = {
             "__tablename__": harmonized_tname(self.pname, core_type, self.part_name),
-            RAW_DATA_ID: db.Column(
+            RAW_DATA_FK: db.Column(
                 db.ForeignKey(f"{raw_tablename}.i_vis_id"), nullable=False, index=True
             ),
             "raw_data": db.relationship(
                 self.raw_model,
-                backref=backref(f"harmonized_{core_type.blueprint_name.replace('-', '_')}", lazy="joined"),
+                backref=backref(
+                    f"harmonized_{core_type.blueprint_name.replace('-', '_')}",
+                    lazy="joined",
+                ),
             ),
             "get_core_type": classmethod(lambda cls: core_type),
             "get_etl": classmethod(lambda cls: self),

@@ -5,8 +5,8 @@ from flask import current_app, has_app_context
 
 from i_vis.core.config import variable_name
 
+CHUNKSIZE = 25e4
 _DISABLED = variable_name("DISABLED_PLUGINS")
-
 _CONFIG: MutableMapping[str, Any] = {}
 
 

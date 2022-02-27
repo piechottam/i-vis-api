@@ -12,7 +12,7 @@ from .models import (
     CancerTypeName,
     CancerTypeMixin,
     DO_ID,
-    CANCER_TYPE_MAX_LENGTH,
+    CANCER_TYPE_NAME_MAX_LENGTH,
     DOID_PREFIX,
 )
 from ... import config_meta, ma
@@ -30,6 +30,8 @@ if TYPE_CHECKING:
     from ... import db
 
 _mapping_rids = ResourceIds()
+
+NAMES_FNAME = "_cancer_types_names.tsv"
 
 
 def add_do_mapping_rid(rid: ResourceId) -> None:
@@ -89,7 +91,7 @@ class Plugin(CoreType):
             get_config().get(_match_type, ",".join(_match_type_default)).split(",")
         )
 
-        fname = os.path.join(self.dir.by_version(self.version.current), "names_raw.tsv")
+        fname = os.path.join(self.dir.by_version(self.version.current), NAMES_FNAME)
         return SimpleHarmonizer(
             target=self.harm_meta.target,
             match_types=match_types,
@@ -117,12 +119,12 @@ class Plugin(CoreType):
 
     def _init_tasks(self) -> None:
         cancer_type_file = self.task_builder.res_builder.file(
-            fname="cancer_types.tsv",
+            fname="_cancer_types.tsv",
             io=tsv_io,
             desc=CancerType.get_res_desc(),
         )
-        names_raw_file = self.task_builder.res_builder.file(
-            fname="names_raw.tsv",
+        cancer_type_names_file = self.task_builder.res_builder.file(
+            fname=NAMES_FNAME,
             io=tsv_io,
             desc=CancerType.get_res_desc(),
         )
@@ -131,9 +133,9 @@ class Plugin(CoreType):
             BuildDict(
                 in_rids=_mapping_rids,
                 entities=cancer_type_file,
-                names_raw=names_raw_file,
+                names=cancer_type_names_file,
                 target_id=DO_ID,
-                max_name_length=CANCER_TYPE_MAX_LENGTH,
+                max_name_length=CANCER_TYPE_NAME_MAX_LENGTH,
                 id_prefix=DOID_PREFIX,
             )
         )
@@ -146,10 +148,8 @@ class Plugin(CoreType):
 
         # load raw chembl to drug name dictionary
         self.task_builder.load(
-            in_rid=names_raw_file.rid,
-            table=self.task_builder.res_builder.table_from_model(
-                model=CancerTypeName
-            ),
+            in_rid=cancer_type_names_file.rid,
+            table=self.task_builder.res_builder.table_from_model(model=CancerTypeName),
         )
 
     @property

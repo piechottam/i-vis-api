@@ -62,11 +62,13 @@ class Plugin(DataSource):
         return DateVersion(recent(*versions))
 
     def _init_tasks(self) -> None:
+        from ...core_types.drug.models import drug_name_res_desc
+
         super()._init_tasks()
         chembl_mapping_file = self.task_builder.res_builder.file(
             fname="_chembl_mapping.tsv",
             io=tsv_io,
-            # TODO desc=drug_name_res_desc,
+            desc=drug_name_res_desc,
         )
         add_chembl_mapping_rid(chembl_mapping_file.rid)
         self.task_builder.add_task(
@@ -117,7 +119,7 @@ class FilterChEMBLMapping(Process):
             value_name="name",
         )
         df = df[["chembl_id", "name"]].dropna().drop_duplicates()
-        df["plugins"] = self.pname
+        df["data_sources"] = self.pname
         self.logger.info(f"{len(df)} ChEMBL IDs retained")
         return df
 

@@ -5,8 +5,9 @@ from sqlalchemy.orm import declared_attr, declarative_mixin, Mapped
 from . import meta
 from ..utils import get_links
 from ... import db, ma
-from ...db_utils import ResDescMixin,  CoreTypeMixin
+from ...db_utils import ResDescMixin, CoreTypeMixin
 from ...fields import StrDictMethod
+from ...resource import ResourceDesc
 
 HGNC_MAX_LENGTH = 12
 HGNC_ID = "hgnc_id"
@@ -15,17 +16,11 @@ GENE_NAME_TYPE_MAX_LENGTH = 100
 HGNC_PREFIX = "HGNC:"
 
 
-class Gene(db.Model, CoreTypeMixin):
+class Gene(db.Model, CoreTypeMixin, ResDescMixin):
     __tablename__ = "genes"
+    __table_args__ = (db.UniqueConstraint(HGNC_ID),)
 
-    hgnc_id = db.Column(db.String(HGNC_MAX_LENGTH), primary_key=True)
-    # TODO what data?
-    status = db.Column(db.String(15), nullable=False)
-    name = db.Column(db.String(125), nullable=False, unique=True, index=True)
-    symbol = db.Column(db.String(30), nullable=False, unique=True, index=True)
-    locus_group = db.Column(db.String(20), nullable=False)
-    locus_type = db.Column(db.String(30), nullable=False)
-
+    hgnc_id = db.Column(db.VARBINARY(HGNC_MAX_LENGTH), nullable=False, index=True)
     names: Mapped[Sequence["GeneName"]] = db.relationship(
         "GeneName", back_populates="gene"
     )
@@ -41,6 +36,7 @@ class GeneMixin:
             db.ForeignKey(Gene.hgnc_id),
             nullable=self.hgnc_id_nullable,
             name=HGNC_ID,
+            index=True,
         )
 
     @declared_attr
@@ -57,6 +53,9 @@ class GeneName(db.Model, GeneMixin, ResDescMixin):
     type = db.Column(db.String(GENE_NAME_TYPE_MAX_LENGTH), nullable=False)
     name = db.Column(db.String(GENE_NAME_MAX_LENGTH), nullable=False)
     data_sources = db.Column(db.String(255), nullable=False)
+
+
+gene_name_res_desc = ResourceDesc([HGNC_ID, "name", "type", "data_sources"])
 
 
 class GeneNameSchema(SQLAlchemyAutoSchema):

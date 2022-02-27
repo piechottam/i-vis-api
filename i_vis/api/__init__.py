@@ -259,6 +259,7 @@ def create_api_app(config: Optional[type] = None) -> Flask:
         _init_blueprints(app, core_types)
 
         from .plugin import register_tasks
+
         register_tasks(data_sources)
 
         # Return validation errors as JSON

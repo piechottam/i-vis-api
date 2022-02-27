@@ -16,7 +16,7 @@ from i_vis.core.version import Date as DateVersion, recent
 
 from . import meta
 from ... import terms as t
-from ...df_utils import tsv_io, TsvIO, i_vis_col
+from ...df_utils import TsvIO, i_vis_col
 from ...etl import Simple, ETLSpec
 from ...plugin import DataSource
 from ...utils import VariableUrl as Url
@@ -62,93 +62,12 @@ class Plugin(DataSource):
         return DateVersion(recent(*dates))
 
 
-#     def _init_tasks(self):
-#         from .models import (
-#             RawGeneSummaryModel,
-#             MappedGeneSummaryModel,
-#             RawVariantSummaryModel,
-#             MappedVariantSummaryModel,
-#             RawVarCitationModel,
-#         )
-#
-#         # download variant summary archive
-#         variant_summary_archive_file = self._extractself.get_url(
-#             "variant_summary.txt.gz"
-#         )
-#
-#         # unpack archive
-#         (variant_summary_file,) = unpack_files(
-#             plugin=self,
-#             out_fnames=("variant_summary.txt",),
-#             readers=(partial(secure_read_df, low_memory=False),),
-#             descriptions=(RawVariantSummaryModel.get_raw_desc(),),
-#         )
-#         unpack_task = Unpack(
-#             pname=NAME,
-#             archive=variant_summary_archive_file,
-#             out_files=(variant_summary_file,),
-#         )
-#         tasks.append(unpack_task)
-#
-#         # map and load variant summaries
-#         self._map_load(
-#             tasks,
-#             in_res=variant_summary_file,
-#             data_model=RawVariantSummaryModel,
-#             mapping_models=MappedVariantSummaryModel,
-#             mapping_task=MapRawData,
-#             part_name="variant_summaries",
-#         )
-#
-#         # download gene specific summaries
-#         extract_gene_task, gene_summaries_file = build_extract_task(
-#             plugin=self,
-#             url=self.get_url("gene_specific_summary.txt"),
-#             reader=partial(secure_read_df, header=1),
-#             description=RawGeneSummaryModel.get_raw_desc(),
-#         )
-#         tasks.append(extract_gene_task)
-#
-#         # map and load gene summaries
-#         self._map_load(
-#             tasks,
-#             in_res=gene_summaries_file,
-#             data_model=RawGeneSummaryModel,
-#             mapping_models=MappedGeneSummaryModel,
-#             mapping_task=MapRawData,
-#             part_name="gene_specific_summary",
-#         )
-#
-#         # download var citations file
-#         extract_var_citations_task, var_citations_file = build_extract_task(
-#             plugin=self,
-#             url=self.get_url("var_citations.txt"),
-#             description=RawVarCitationModel.get_raw_desc(),
-#             reader=secure_read_df,
-#         )
-#         tasks.append(extract_var_citations_task)
-#
-#         # load var citations
-#         var_citations_table = Table(
-#             plugin=self,
-#             tname=RawVarCitationModel.__tablename__,
-#             description=RawVarCitationModel.get_tbl_desc(),
-#         )
-#         tasks.append(
-#             Load(
-#                 pname=self.name,
-#                 file_rid=var_citations_file.rid,
-#                 table=var_citations_table,
-#                 jsonify=True,
-#             )
-#         )
-
-
 # FUTURE imported data breaks FK constraint
 class GeneSummaries(ETLSpec):
     class Extract:
         url = Url(_GENE_SPECIFIC_SUMMARY_URL_VAR, latest=True)
-        io = TsvIO(read_opts={"header": 1})
+        io = TsvIO(read_opts={"header": 1, "dtype": "str"})
+        add_id = True
 
         class Raw:
             gene_id = Simple()
@@ -245,7 +164,7 @@ class VariantSummary(ETLSpec):
 class VarCitations(ETLSpec):
     class Extract:
         url = Url(_VAR_CITATIONS_URL_VAR, latest=True)
-        io = tsv_io
+        io = TsvIO(read_opts={"dtype": str})
         add_id = True
 
         class Raw:

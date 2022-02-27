@@ -3,10 +3,10 @@ from typing import Sequence, TYPE_CHECKING, Any, Mapping
 from sqlalchemy.orm import declared_attr, declarative_mixin, Mapped
 from marshmallow_sqlalchemy import SQLAlchemyAutoSchema
 
-from . import TNAME, NAMES_TNAME, meta
+from . import meta
 from ... import ma, db
 from ..utils import get_links
-from ...db_utils import ResDescMixin
+from ...db_utils import ResDescMixin, CoreTypeMixin
 from ...resource import ResourceDesc
 from ...fields import StrDictMethod
 
@@ -15,46 +15,32 @@ if TYPE_CHECKING:
 
 DOID_MAX_LENGTH = 12
 DO_ID = "do_id"
-CANCER_TYPE_MAX_LENGTH = 255
+CANCER_TYPE_NAME_MAX_LENGTH = 255
 DOID_PREFIX = "DOID:"
 
 
-class CancerType(db.Model, ResDescMixin):
-    __tablename__ = TNAME
+class CancerType(db.Model, CoreTypeMixin, ResDescMixin):
+    __tablename__ = "cancer_types"
+    __table_args__ = (db.UniqueConstraint(DO_ID),)
 
-    id = db.Column(db.Integer, autoincrement=True)
-    do_id = db.Column(db.String(DOID_MAX_LENGTH), primary_key=True)
-
-    raw_names: Mapped[Sequence["CancerTypeName"]] = db.relationship(
-        "CancerTypeName"
+    id = db.Column(db.Integer, primary_key=True)
+    do_id = db.Column(db.VARBINARY(DOID_MAX_LENGTH), nullable=False, index=True)
+    names: Mapped[Sequence["CancerTypeName"]] = db.relationship(
+        "CancerTypeName", back_populates="cancer_type"
     )
-
-
-class CancerTypeName(db.Model, ResDescMixin):
-    __tablename__ = NAMES_TNAME
-
-    @declared_attr
-    # pylint: disable=invalid-name
-    def id(self) -> Mapped[int]:
-        return db.Column(db.Integer, primary_key=True, autoincrement=True)
-
-    @declared_attr
-    def name(self) -> Mapped[str]:
-        return db.Column(db.String(255), nullable=False, index=True)
-
-    @declared_attr
-    def do_id(self) -> Mapped[str]:
-        return db.Column(db.ForeignKey(CancerType.do_id), nullable=False)
 
 
 @declarative_mixin
 class CancerTypeMixin:
+    do_id_nullable = True
+
     @declared_attr
     def do_id(self) -> Mapped[str]:
         return db.Column(
             db.ForeignKey(CancerType.do_id),
-            nullable=True,
+            nullable=self.do_id_nullable,
             name=DO_ID,
+            index=True,
         )
 
     @declared_attr
@@ -62,7 +48,17 @@ class CancerTypeMixin:
         return db.relationship(CancerType)
 
 
-cancer_type_name_res_desc = ResourceDesc(["do_id", "name", "plugins"])
+class CancerTypeName(db.Model, CancerTypeMixin, ResDescMixin):
+    __tablename__ = "cancer_type_names"
+    __table_args__ = (db.UniqueConstraint(DO_ID, "name"),)
+    do_id_nullable = False
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    name = db.Column(db.String(CANCER_TYPE_NAME_MAX_LENGTH), nullable=False)
+    data_sources = db.Column(db.Text, nullable=False)
+
+
+cancer_type_name_res_desc = ResourceDesc([DO_ID, "name", "data_sources"])
 
 
 class CancerTypeNameSchema(SQLAlchemyAutoSchema):

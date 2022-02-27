@@ -23,7 +23,7 @@ from ...plugin import DataSource
 from ...utils import VariableUrl as Url
 
 _URL_PREFIX = (
-    "mysql://anonymous:@mysql-db.1000genomes.org:4272/homo_sapiens_variation_73_37"
+    "mysql://anonymous@mysql-db.1000genomes.org:4272/homo_sapiens_variation_73_37"
 )
 
 
@@ -51,63 +51,6 @@ class Plugin(DataSource):
         major, minor = get_config()[_VERSION_VAR].split(".")
         return DefaultVersion(int(major), int(minor))
 
-    #     def _init_tasks(self):
-    #         from .models import (
-    #             RawSeqRegionModel,
-    #             RawVariationFeatureModel,
-    #         )
-    #
-    #         # download seq region
-    #         extract_seq_region_task, seq_region_file = build_extract_task(
-    #             plugin=self,
-    #             url=self.get_url("seq_region"),
-    #             out_fname="seq_region.tsv",
-    #             description=RawSeqRegionModel.get_raw_desc(),
-    #             reader=secure_read_df,
-    #         )
-    #         tasks.append(extract_seq_region_task)
-    #
-    #         # load seq region
-    #         seq_region_table = Table(
-    #             plugin=self,
-    #             tname=RawSeqRegionModel.__tablename__,
-    #             description=RawSeqRegionModel.get_tbl_desc(),
-    #         )
-    #         load_seq_region_task = Load(
-    #             pname=self.name,
-    #             file_rid=seq_region_file.rid,
-    #             table=seq_region_table,
-    #             jsonify=True,
-    #         )
-    #         tasks.append(load_seq_region_task)
-    #
-    #         # extract variation feature
-    #         extract_variation_task, variation_file = build_extract_task(
-    #             plugin=self,
-    #             url=self.get_url("variation_feature"),
-    #             out_fname="variation.tsv",
-    #             description=RawVariationFeatureModel.get_raw_desc(),
-    #             reader=secure_read_df,
-    #         )
-    #         tasks.append(extract_variation_task)
-    #
-    #         # load variation feature
-    #         variation_table = Table(
-    #             plugin=self,
-    #             tname=RawVariationFeatureModel.__tablename__,
-    #             description=RawVariationFeatureModel.get_tbl_desc(),
-    #         )
-    #         tasks.append(
-    #             Load(
-    #                 pname=self.name,
-    #                 file_rid=variation_file.rid,
-    #                 table=variation_table,
-    #                 jsonify=True,
-    #             )
-    #         )
-    #
-    #         return tasks
-
 
 class SeqRegion(ETLSpec):
     class Extract:
@@ -134,7 +77,7 @@ class SeqRegion(ETLSpec):
 class Variation(ETLSpec):
     class Extract:
         url = Url(_VARIATION_FEATURE_URL_VAR)
-        out_fname = "variation_feature.tsv"  # TODO zip
+        out_fname = "variation_feature.tsv"
         io = tsv_io
         add_id = True
 

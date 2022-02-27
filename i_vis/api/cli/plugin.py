@@ -39,6 +39,7 @@ from ..plugin_exceptions import (
 )
 from ..plugin import (
     BasePlugin,
+    CoreType,
     DataSource,
     register_tasks,
     post_register,
@@ -191,8 +192,8 @@ def status(
     """Print status of plugins"""
     table = []
 
-    pnames = list(BasePlugin.pnames(not ignore_disabled, ptype="Core Type")) + list(
-        BasePlugin.pnames(not ignore_disabled, ptype="Data Source")
+    pnames = list(CoreType.pnames(not ignore_disabled)) + list(
+        DataSource.pnames(not ignore_disabled)
     )
     for pname in pnames:
         plugin = BasePlugin.get(pname)
@@ -604,10 +605,9 @@ def upgrade(
     # * "update" -> existing version
     register_upgrade_tasks(upgrade_plugins, check_upgrade=not ignore_upgrade_check)
 
+    # TODO BasePlugin.instances()
     installed_plugins = tuple(
-        p
-        for p in BasePlugin.instances()
-        if p not in upgrade_plugins and p.updater.current
+        p for p in plugins if p not in upgrade_plugins and p.updater.current
     )
     try:
         register_update_tasks(installed_plugins)

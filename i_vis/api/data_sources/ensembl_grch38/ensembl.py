@@ -53,8 +53,7 @@ class EnsemblPlugin(DataSource):
         )
 
 
-# TODO add file description hgnc_id type name [data_sources]
-class FilterHgncMapping(Process):
+class HgncMapping(Process):
     def _process(self, df: DataFrame, context: "Resources") -> DataFrame:
         # filter hgnc_ids: remove empty rows
         pre = len(df)
@@ -67,4 +66,5 @@ class FilterHgncMapping(Process):
         # melt to type and name
         df = df.melt(id_vars=["hgnc_id"], var_name="type", value_name="name")
         df = sort_prefixed(df, "hgnc_id", "HGNC:")
+        df["data_sources"] = self.out_res.plugin.name
         return df

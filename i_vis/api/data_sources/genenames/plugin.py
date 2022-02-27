@@ -69,12 +69,13 @@ class Plugin(DataSource):
         )
 
     def _init_tasks(self) -> None:
+        from ...core_types.gene.models import gene_name_res_desc
+
         super()._init_tasks()
 
         fname = "_mapping.tsv"
         mapping_file = self.task_builder.res_builder.file(
-            fname=fname,
-            io=tsv_io,
+            fname=fname, io=tsv_io, desc=gene_name_res_desc
         )
         add_hgnc_mapping_rid(mapping_file.rid)
         self.task_builder.add_task(
@@ -93,7 +94,6 @@ def url_callback() -> str:
     return f"{url}?query={q}"
 
 
-# TODO hgnc_id\tname\tdata_sources
 class HgncMapping(Process):
     def _process(self, df: DataFrame, context: "Resources") -> DataFrame:
         df = cast(DataFrame, df.convert_dtypes())
@@ -106,21 +106,21 @@ class HgncMapping(Process):
         # extract i-vis columns
         id_vars = fk
 
-        name_c = "name"
         df = (
             df.loc[:, cols]
             .melt(
                 id_vars=id_vars,
-                value_name=name_c,
+                value_name="name",
                 var_name="type",
             )
             .dropna()
             .sort_values(fk)
-            .explode(name_c)
+            .explode("name")
             .dropna()
             .drop_duplicates(ignore_index=True)
             .pipe(add_pk)
         )
+        df["data_sources"] = self.out_res.plugin.name
         return df
 
 

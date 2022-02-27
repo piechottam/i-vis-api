@@ -30,10 +30,6 @@ if TYPE_CHECKING:
     from ..resource import Resources, File
 
 
-# TODO
-# * one output tasks
-# *
-
 logger = logging.getLogger("task")
 
 
@@ -41,21 +37,6 @@ class ByPackage:
     def __init__(self, desc: str, version: str) -> None:
         self.desc = desc
         self.version = version
-
-
-# TODO remove
-# def urls2desc(urls: Union[Sequence[str], str]) -> str:
-#    if isinstance(urls, str):
-#        urls = [urls]
-#    schemes = set(urlparse(url).scheme for url in urls)
-#    return f'Get data: {len(urls)} URL(s) via {",".join(schemes)}'
-#
-#
-# def urls2name(urls: Union[Sequence[str], str]) -> str:
-#    if isinstance(urls, str):
-#        urls = [urls]
-#    files = set(os.path.basename(urlparse(url).path) for url in urls)
-#    return f'{",".join(files)}'
 
 
 class Extract(Task, ABC):
@@ -353,11 +334,12 @@ class DumpTbl(Extract):
         self.out_res.dirty = True
 
     def dump_table(self, url: str, out_fname: str, chunksize: int = 10000) -> None:
-        # extract tname from url, e.g.: mysql://user:pass@host:port/dbname/tname
+        # extract tname and db from url, e.g.: mysql://user:pass@host:port/dbname/tname
         parsed = urlparse(url)
         tname = os.path.basename(parsed.path)
+        db = os.path.dirname(parsed.path)
         # url without tname
-        parsed_url = parsed._replace(path=os.path.basename(parsed.path)).geturl()
+        parsed_url = parsed._replace(path=db).geturl()
 
         engine = create_engine(parsed_url, server_side_cursors=True)
         with engine.connect() as conn:

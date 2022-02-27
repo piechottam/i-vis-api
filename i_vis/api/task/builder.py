@@ -24,7 +24,7 @@ from ..resource import (
 )
 from .extract import Delayed, create_task as create_extract_task
 from .load import Load
-from .transform import Unpack, HarmonizeRawData, ConvertToParquet, MergedRawData
+from .transform import Unpack, HarmonizeRawData, ConvertToParquet, MergeRawData
 from ..plugin_exceptions import WrongPlugin
 from ..df_utils import DataFrameIO, parquet_io, tsv_io, ParquetIO, TsvIO
 from ..file_utils import unpack_files, harmonized_fname, not_harmonized_fname
@@ -165,6 +165,9 @@ class TaskBuilder:
         etl: "ETL",
     ) -> Tuple["File", Mapping["CoreTypeHarmDesc", Tuple["File", "File"]]]:
         harm_desc2files: MutableMapping["CoreTypeHarmDesc", Tuple["File", "File"]] = {}
+        fname = etl.raw_data_fname
+        out_res = self.res_builder.file(fname, io=TsvIO(to_opts={"index": True}))
+
         for core_type in etl.core_types:
             harm_file = self.res_builder.file(
                 fname=harmonized_fname(core_type, etl.part_name),
@@ -187,8 +190,7 @@ class TaskBuilder:
                 not_harm_file,
             )
 
-        fname = etl.raw_data_fname
-        out_res = self.res_builder.file(fname, io=TsvIO(to_opts={"index": True}))
+        # TODO exposed columns in raw_data
         if etl.split_harm:
             in_res_ids: MutableSequence["ResourceId"] = list()
             for harm_desc, files in harm_desc2files.items():
@@ -204,8 +206,16 @@ class TaskBuilder:
                     out_res=out_parquet,
                     raw_columns=etl.all_raw_columns,
                 )
-            task = MergedRawData(in_res_ids=in_res_ids, out_file=out_res)
-            self.add_task(task)
+            if in_res_ids:
+                task = MergeRawData(in_res_ids=in_res_ids, out_file=out_res)
+                self.add_task(task)
+            else:
+                self.harmonize_raw_data(
+                    in_rid=in_rid,
+                    harm_desc2files=harm_desc2files,
+                    out_res=out_res,
+                    raw_columns=etl.all_raw_columns,
+                )
         else:
             self.harmonize_raw_data(
                 in_rid=in_rid,
@@ -395,7 +405,10 @@ class TaskBuilder:
             task_opts.setdefault("io", io)
             task_opts["desc"] = desc
 
-            transform_task = task.task(in_rid=rid, **task_opts)
-            rid = transform_task.out_res.rid
-            self.add_task(transform_task)
+            try:
+                transform_task = task.task(in_rid=rid, **task_opts)
+                rid = transform_task.out_res.rid
+                self.add_task(transform_task)
+            except Exception as e:
+                breakpoint()
         return rid

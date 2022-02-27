@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 logger = getLogger()
 
 # primary key column name
-PK = i_vis_col("id")
+RAW_DATA_PK = i_vis_col("id")
 
 
 def get_part(pname: str, part_name: str = "") -> str:
@@ -83,6 +83,8 @@ class ResDescMixin:
 class CoreTypeMixin(ResDescMixin):
     """CoreType Model"""
 
+    id = db.Column(db.Integer, primary_key=True)
+
     @property
     def related_data(self):
         breakpoint()
@@ -121,8 +123,8 @@ class RawDataMixin(ResDescMixin):
 
     @property
     def raw_data(self) -> Mapping[str, str]:
-        df = self.parquet.read().loc[self.i_vis_id]
-        return df.to_dict()
+        df = cast(dd.DataFrame, self.parquet.read()).loc[self.i_vis_id]
+        return cast(Mapping[str, str], df.to_dict())
 
     def get_raw_data(self, ids: Sequence[int]) -> pd.DataFrame:
         df = cast(dd.DataFrame, self.parquet.read()).loc[ids]
@@ -145,7 +147,7 @@ class RawData(db.Model, RawDataMixin):
 class HarmonizedDataMixin(ResDescMixin):
     """Mixin for mapped data"""
 
-    i_vis_id = db.Column(db.Integer, primary_key=True)
+    id = db.Column(db.Integer, primary_key=True)
 
     @declared_attr
     def i_vis_raw_data_id(self) -> Mapped[int]:

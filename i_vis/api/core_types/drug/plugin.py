@@ -17,7 +17,6 @@ from .models import (
     CHEMBL_PREFIX,
     DrugName,
     DRUG_NAME_MAX_LENGTH,
-    DRUG_NAME_TYPE_MAX_LENGTH,
 )
 from ... import config_meta, ma
 from ...df_utils import tsv_io
@@ -34,6 +33,9 @@ if TYPE_CHECKING:
     from ...resource import Resources
 
 _mapping_rids = ResourceIds()
+
+DRUGS_FNAME = "_drugs.tsv"
+DRUG_NAMES_FNAME = "_drug_names.tsv"
 
 
 def add_chembl_mapping_rid(rid: ResourceId) -> None:
@@ -101,7 +103,9 @@ class Plugin(CoreType):
             get_config().get(_match_type, ",".join(_match_type_default)).split(",")
         )
 
-        fname = os.path.join(self.dir.by_version(self.version.current), "names_raw.tsv")
+        fname = os.path.join(
+            self.dir.by_version(self.version.current), DRUG_NAMES_FNAME
+        )
         return SimpleHarmonizer(
             target=self.harm_meta.target,
             match_types=match_types,
@@ -121,44 +125,44 @@ class Plugin(CoreType):
 
     def _init_tasks(self) -> None:
         from ...task.transform import BuildDict
-        from ...data_sources.chembl import meta as chembl_meta, OTHER_MAPPINGS_FNAME
-
+        from ...data_sources.chembl import (
+            meta as chembl_meta,
+            POST_MERGED_MAPPING_FNAME,
+        )
 
         drugs_file = self.task_builder.res_builder.file(
-            fname="_drugs.tsv",
+            fname=DRUGS_FNAME,
             io=tsv_io,
             desc=Drug.get_res_desc(),
         )
-        names_raw_file = self.task_builder.res_builder.file(
-            fname="_names_raw.tsv",
+        drug_names_file = self.task_builder.res_builder.file(
+            fname=DRUG_NAMES_FNAME,
             io=tsv_io,
             desc=DrugName.get_res_desc(),
         )
 
-        # build chembl to raw drug name dictionary
+        merged_chembl_mapping_file = self.task_builder.res_builder.file(
+            "_pre_merged_mappings.tsv",
+            io=tsv_io,
+            desc=DrugName.get_res_desc(),
+        )
+        merge_mappings_task = MergeMappings(
+            mapping_rids=_mapping_rids, out_file=merged_chembl_mapping_file
+        )
+        self.task_builder.add_task(merge_mappings_task)
+
+        in_rids = ResourceIds()
+        in_rids.add(File.link(chembl_meta.name, POST_MERGED_MAPPING_FNAME))
+        # build chembl to drug name dictionary
         build_dict_task = BuildDict(
-            in_rids=_mapping_rids,
+            in_rids=in_rids,
             entities=drugs_file,
-            names_raw=names_raw_file,
+            names=drug_names_file,
             max_name_length=DRUG_NAME_MAX_LENGTH,
-            max_type_length=DRUG_NAME_TYPE_MAX_LENGTH,
             target_id=CHEMBL_ID,
             id_prefix=CHEMBL_PREFIX,
         )
         self.task_builder.add_task(build_dict_task)
-
-        if False:
-            # Workaround - ChEMBL does not offer flat file - add ChEMBL entries "on demand"
-            build_dict_task.required_rids.add(
-                File.link(chembl_meta.name, OTHER_MAPPINGS_FNAME)
-            )
-
-            merged_chembl_mapping_file = self.task_builder.res_builder.file("_merged_mappings.tsv")
-            merge_mappings_task = MergeMappings(
-                mapping_rids=_mapping_rids,
-                out_file=merged_chembl_mapping_file
-            )
-            self.task_builder.add_task(merge_mappings_task)
 
         # load chembl drugs dictionary
         self.task_builder.load(
@@ -168,7 +172,7 @@ class Plugin(CoreType):
 
         # load raw chembl to drug name dictionary
         self.task_builder.load(
-            in_rid=names_raw_file.rid,
+            in_rid=drug_names_file.rid,
             table=self.task_builder.res_builder.table_from_model(model=DrugName),
         )
 

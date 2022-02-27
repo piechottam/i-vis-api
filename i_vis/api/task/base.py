@@ -343,6 +343,7 @@ class Task:
                 from .. import db
 
                 db.session.flush()
+                SystemExit()
 
         return Resources(self.offered)
 

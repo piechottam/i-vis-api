@@ -72,6 +72,7 @@ class Load(_Load):
         fname = file.qname
         rows = lines(fname)
         cols = pd.read_csv(fname, sep="\t", nrows=0).columns.tolist()
+        breakpoint()
         query = self._build_query(self.out_table, fname, cols)
         self._load(self.out_table, query, rows)
 
@@ -85,7 +86,6 @@ class Load(_Load):
         nullable_fields = []
         model = table.model
         for col in cols:
-
             if getattr(model, col).nullable:
                 nullable_fields.append(col)
                 col = "@" + col

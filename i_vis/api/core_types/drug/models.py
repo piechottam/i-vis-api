@@ -3,15 +3,12 @@ from typing import Sequence, TYPE_CHECKING, Any, Mapping
 from sqlalchemy.orm import declared_attr, declarative_mixin, Mapped
 from marshmallow_sqlalchemy import SQLAlchemyAutoSchema
 
-from . import (
-    TNAME,
-    NAMES_TNAME,
-    meta,
-)
+from . import meta
 from ..utils import get_links
 from ... import db, ma
-from ...db_utils import ResDescMixin
+from ...db_utils import ResDescMixin, CoreTypeMixin
 from ...fields import StrDictMethod
+from ...resource import ResourceDesc
 
 if TYPE_CHECKING:
     pass
@@ -19,15 +16,14 @@ if TYPE_CHECKING:
 CHEMBL_MAX_LENGTH = 13
 CHEMBL_ID = "chembl_id"
 DRUG_NAME_MAX_LENGTH = 255
-DRUG_NAME_TYPE_MAX_LENGTH = 100
 CHEMBL_PREFIX = "CHEMBL"
 
 
-class Drug(db.Model, ResDescMixin):
-    __tablename__ = TNAME
+class Drug(db.Model, CoreTypeMixin, ResDescMixin):
+    __tablename__ = "drugs"
+    __table_args__ = (db.UniqueConstraint(CHEMBL_ID),)
 
-    chembl_id = db.Column(db.String(CHEMBL_MAX_LENGTH), primary_key=True)
-
+    chembl_id = db.Column(db.VARBINARY(CHEMBL_MAX_LENGTH), nullable=False, index=True)
     names: Mapped[Sequence["DrugName"]] = db.relationship(
         "DrugName", back_populates="drug"
     )
@@ -43,6 +39,7 @@ class DrugMixin:
             db.ForeignKey(Drug.chembl_id),
             nullable=self.chembl_id_nullable,
             name=CHEMBL_ID,
+            index=True,
         )
 
     @declared_attr
@@ -51,14 +48,16 @@ class DrugMixin:
 
 
 class DrugName(db.Model, DrugMixin, ResDescMixin):
-    __tablename__ = NAMES_TNAME
+    __tablename__ = "drug_names"
     __table_args__ = (db.UniqueConstraint(CHEMBL_ID, "name"),)
     chembl_id_nullable = False
 
     id = db.Column(db.Integer, primary_key=True)
-    type = db.Column(db.String(DRUG_NAME_TYPE_MAX_LENGTH), nullable=False)
-    name = db.Column(db.String(DRUG_NAME_MAX_LENGTH), nullable=False)
+    name = db.Column(db.VARBINARY(DRUG_NAME_MAX_LENGTH), nullable=False)
     data_sources = db.Column(db.String(255), nullable=False)
+
+
+drug_name_res_desc = ResourceDesc([CHEMBL_ID, "name", "data_sources"])
 
 
 class DrugNameSchema(SQLAlchemyAutoSchema):
@@ -78,10 +77,7 @@ class DrugSchema(SQLAlchemyAutoSchema):
     raw_names = ma.Nested(
         DrugNameSchema(
             many=True,
-            exclude=(
-                "drug",
-                CHEMBL_ID,
-            ),
+            exclude=(CHEMBL_ID,),
         ),
     )
     links = StrDictMethod("_get_links")

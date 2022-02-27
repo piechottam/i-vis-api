@@ -8,4 +8,4 @@ meta = Meta.create(
     url="https://github.com/chembl/chembl_webresource_client",
 )
 
-OTHER_MAPPINGS_FNAME = "_other_mappings.tsv"
+POST_MERGED_MAPPING_FNAME = "_post_merged_mappings.tsv"

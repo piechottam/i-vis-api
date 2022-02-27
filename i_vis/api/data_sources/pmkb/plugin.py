@@ -10,7 +10,7 @@ PMKB
 :credentials: none
 """
 
-from typing import Any, TYPE_CHECKING, Optional
+from typing import Any, TYPE_CHECKING, Optional, Iterable, Union
 import pandas as pd
 
 from i_vis.core.version import Default as DefaultVersion
@@ -34,7 +34,6 @@ if TYPE_CHECKING:
 
 class Plugin(DataSource):
     def __init__(self) -> None:
-        # OLD: url='https://pmkb.weill.cornell.edu/therapiesdownloat.xlsx',
         super().__init__(
             meta=meta, etl_specs=[Spec], str_to_version=DefaultVersion.from_str
         )
@@ -50,26 +49,30 @@ class CustomReader(PandasDataFrameIO):
 
     def _read_df(
         self, in_res: "Resource", logger: Optional["I_VIS_Logger"] = None, **kwargs: Any
-    ) -> pd.DataFrame:
+    ) -> Union[pd.DataFrame, Iterable[pd.DataFrame]]:
         df = super()._read_df(in_res, logger, **kwargs)
-        df_full = self.to_full(df)
+        if isinstance(df, pd.DataFrame):
+            return self._fix(df)
 
+        return [self._fix(df_) for df_ in df]
+
+    @staticmethod
+    def _fix(df: pd.DataFrame) -> pd.DataFrame:
         # change sep from ',' to ';'
-        df_full.iloc[:, 1].str.replace(",", ";", regex=False)
+        df.iloc[:, 1].str.replace(",", ";", regex=False)
         # merge citations into one column
-        citations = df_full.iloc[:, 7:].apply(
-            lambda x: "; ".join(x.astype(str)), axis=1
-        )
+        citations = df.iloc[:, 7:].apply(lambda x: "; ".join(x.astype(str)), axis=1)
         # retain everything but citation columns
-        df_full = df_full.iloc[:, :7]
-        df_full["citations"] = citations
-        return df_full
+        df = df.iloc[:, :7]
+        df["citations"] = citations
+        return df
 
 
 class Spec(ETLSpec):
     class Extract:
         url = Url(_URL_VAR, latest=True)
         io = CustomReader()
+        add_id = True
 
         class Raw:
             gene = Simple(terms=[t.GeneName()])

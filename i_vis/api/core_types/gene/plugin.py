@@ -135,7 +135,7 @@ class Plugin(CoreType):
             BuildDict(
                 in_rids=_mapping_rids,
                 entities=genes_file,
-                names_raw=gene_names_file,
+                names=gene_names_file,
                 target_id=HGNC_ID,
                 max_name_length=GENE_NAME_MAX_LENGTH,
                 max_type_length=GENE_NAME_TYPE_MAX_LENGTH,

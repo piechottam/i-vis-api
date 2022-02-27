@@ -12,7 +12,7 @@ No complete dump of ChEMBLy^
 :credentials: none
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 import re
 
@@ -24,7 +24,7 @@ from tqdm import tqdm
 from i_vis.core.version import Default as DefaultVersion
 from i_vis.core.utils import StatusCode200Error
 
-from . import meta, OTHER_MAPPINGS_FNAME
+from . import meta, POST_MERGED_MAPPING_FNAME
 from ...config_utils import get_config
 from ...df_utils import (
     sort_prefixed,
@@ -32,14 +32,17 @@ from ...df_utils import (
     check_new_columns,
     check_missing_column,
     json_io,
+    parquet_io,
     tsv_io,
     DataFrameIO,
+    add_id,
+    RAW_DATA_PK,
 )
 from ...etl import ETLSpec, Simple
 from ...plugin import DataSource
 from ...resource import File, Parquet, ResourceId, ResourceDesc
 from ...task.extract import Extract
-from ...task.transform import Process
+from ...task.transform import Process, Transform
 from ...terms import ChEMBLid
 from ...utils import chunker, tqdm_desc
 
@@ -89,46 +92,69 @@ class Plugin(DataSource):
 
     def _init_tasks(self) -> None:
         from ...core_types.drug import meta as drug_meta
-        from ...core_types.drug.plugin import add_chembl_mapping_rid
+        from ...core_types.drug.models import drug_name_res_desc
 
         self.etl_manager.init_part2etl()
         etl = self.etl_manager.part2etl[meta.name]
 
         # retrieve ChEMBL drugs from ChEMBL
-        chembl_drugs_file = self.task_builder.res_builder.file(
+        drugs_file = self.task_builder.res_builder.file(
             fname="drugs.json",
             io=json_io,
             desc=ResourceDesc(etl.raw_columns.cols),
         )
-        self.task_builder.add_task(RetrieveDrugs(out_file=chembl_drugs_file))
+        self.task_builder.add_task(
+            RetrieveDrugs(out_file=drugs_file),
+        )
 
-        # retrieve and merge other entries with ChEMBL drugs
-        other_entries_file = self.task_builder.res_builder.file(
-            fname="_other_entries.json",
+        # drug_mapping_file = self.task_builder.res_builder.file(
+        #    fname="_drug_mappings.tsv", io=tsv_io, desc=drug_name_res_desc
+        # )
+        # self.task_builder.add_task(
+        #    ConvertJSON(in_rid=drugs_file.rid, out_res=drug_mapping_file)
+        # )
+        # add_chembl_mapping_rid(drug_mapping_file.rid)
+
+        # retrieve non ChEMBL drugs from ChEMBL entries
+        merged_entries_file = self.task_builder.res_builder.file(
+            fname="_merged_entries.json",
             io=json_io,
             desc=ResourceDesc(etl.raw_columns.cols),
         )
+        pre_merged_mapping_file_id = File.link(
+            drug_meta.name, "_pre_merged_mappings.tsv"
+        )
+
         self.task_builder.add_task(
             RetrieveOther(
-                chembl_drugs_file_id=chembl_drugs_file.rid,
-                chembl_mapping_file_id=File.link(drug_meta.name, "_merged_mappings.tsv"),
-                out_file=other_entries_file,
-            )
+                drugs_file_id=drugs_file.rid,
+                pre_merged_mapping_file_id=pre_merged_mapping_file_id,
+                merged_entries_file=merged_entries_file,
+            ),
         )
 
-        # convert JSON to chembl mappings
-        other_mappings_file = self.task_builder.res_builder.file(
-            OTHER_MAPPINGS_FNAME, io=tsv_io
+        #
+        post_merged_mapping_file = self.task_builder.res_builder.file(
+            fname=POST_MERGED_MAPPING_FNAME,
+            io=tsv_io,
+            desc=drug_name_res_desc,
+        )
+        raw_data_parquet = self.task_builder.res_builder.parquet(
+            path="_" + meta.name + ".parquet",
+            io=parquet_io,
+            desc=ResourceDesc(etl.raw_columns.cols),
         )
         self.task_builder.add_task(
-            ConvertJSON(
-                in_rid=other_entries_file.rid, out_res=other_mappings_file
+            Merge(
+                merged_entries_file_id=merged_entries_file.rid,
+                pre_merged_mapping_file_id=pre_merged_mapping_file_id,
+                post_merged_mapping_file=post_merged_mapping_file,
+                raw_data_parquet=raw_data_parquet,
             )
         )
-        add_chembl_mapping_rid(other_mappings_file.rid)
 
         out_res, harm_desc2files = self.task_builder.harmonize(
-            other_entries_file.rid, etl
+            raw_data_parquet.rid, etl
         )
         self.task_builder.load_raw(out_res, etl)
         self.task_builder.load_harmonized(harm_desc2files, etl=etl)
@@ -165,28 +191,32 @@ class RetrieveDrugs(Extract):
 
 
 class RetrieveOther(Extract):
-    """TODO
+    """
     Retrieves Information for entries in ChEMBL beyond the ones that are listed as drugs
     """
 
     def __init__(
         self,
-        chembl_drugs_file_id: ResourceId,
-        chembl_mapping_file_id: ResourceId,
-        out_file: File,
+        drugs_file_id: ResourceId,
+        merged_entries_file: File,
+        pre_merged_mapping_file_id: Optional[ResourceId] = None,
     ) -> None:
+        required = [drugs_file_id]
+        if pre_merged_mapping_file_id:
+            required.append(pre_merged_mapping_file_id)
+
         super().__init__(
-            offers=[out_file],
-            requires=[chembl_drugs_file_id, chembl_mapping_file_id],
+            offers=[merged_entries_file],
+            requires=required,
         )
 
         # input
         # file with existing chembl drug ids
-        self.chembl_drugs_file_id = chembl_drugs_file_id
+        self.chembl_drugs_file_id = drugs_file_id
 
         # file with existing other chembl ids
         # expected format: "chembl_id"\t"name"\t"data_source
-        self.chembl_mapping_file_id = chembl_mapping_file_id
+        self.pre_merged_mapping_file_id = pre_merged_mapping_file_id
 
     # pylint: disable=too-many-locals
     def _do_work(self, context: "Resources") -> None:
@@ -195,11 +225,16 @@ class RetrieveOther(Extract):
         known_drugs = context[self.chembl_drugs_file_id].read_full()
         known_chembl_ids = set(known_drugs["molecule_chembl_id"].to_list())
 
+        if not self.pre_merged_mapping_file_id:
+            self.logger.warning("No other sources")
+            self.out_res.save(known_drugs, logger=self.logger)
+            return
+
         # expected format: file with one column called "chembl_id"
-        other = context[self.chembl_mapping_file_id].read_full()
+        other_mapping = context[self.pre_merged_mapping_file_id].read_full()
 
         # container for chembl ids from other sources
-        other_chembl_ids = set(other["chembl_id"].unique())
+        other_chembl_ids = set(other_mapping["chembl_id"].unique())
 
         unknown_chembl_ids = other_chembl_ids.difference(known_chembl_ids)
         if not unknown_chembl_ids:
@@ -252,40 +287,72 @@ class RetrieveOther(Extract):
 
 class ConvertJSON(Process):
     def _process(self, df: "AnyDataFrame", context: "Resources") -> "AnyDataFrame":
-        from ...core_types.drug.models import CHEMBL_PREFIX
-
         df = DataFrameIO.to_full(df)
-        new_df = DataFrame()
-        new_df["chembl_id"] = df["molecule_chembl_id"]
-        new_df["research_codes"] = df["research_codes"]
-        new_df["synonyms"] = df["synonyms"]
-        for col in ("molecule_synonym",):
-            tmp_col = col + "s"
-            new_df[col] = df[tmp_col].apply(
-                lambda values, key: [v[key] for v in values], key=col
-            )
+        return extract_names(df)
 
-        new_df = (
-            new_df.melt(
-                id_vars="chembl_id",
-                var_name="name_type",
-                value_name="name",
-            )
-            .drop(columns="name_type")
-            .explode("name")
-            .dropna()
-            .drop_duplicates()
-            .query("name" + " != ''")
+
+def extract_names(df: DataFrame) -> DataFrame:
+    from ...core_types.drug.models import CHEMBL_PREFIX
+
+    new_df = DataFrame()
+    new_df["chembl_id"] = df["molecule_chembl_id"]
+    new_df["research_codes"] = df["research_codes"]
+    new_df["synonyms"] = df["synonyms"]
+    for col in ("molecule_synonym",):
+        tmp_col = col + "s"
+        new_df[col] = df[tmp_col].apply(
+            lambda values, key: [v[key] for v in values], key=col
         )
-        # remove specific parenthesis - see regex
-        new_df["name"] = new_df["name"].str.replace(REGEX, "", regex=True)
-        new_df = new_df.drop_duplicates().reset_index(drop=True)
 
-        # nicely sort by chembl_id
-        new_df = sort_prefixed(new_df, "chembl_id", CHEMBL_PREFIX)
-        new_df["plugins"] = "chembl"
+    new_df = (
+        new_df.melt(
+            id_vars="chembl_id",
+            var_name="name_type",
+            value_name="name",
+        )
+        .drop(columns="name_type")
+        .explode("name")
+        .dropna()
+        .drop_duplicates()
+        .query("name" + " != ''")
+    )
+    # remove specific parenthesis - see regex
+    new_df["name"] = new_df["name"].str.replace(REGEX, "", regex=True)
+    new_df = new_df.drop_duplicates().reset_index(drop=True)
 
-        return new_df
+    # nicely sort by chembl_id
+    new_df = sort_prefixed(new_df, "chembl_id", CHEMBL_PREFIX)
+    new_df["data_sources"] = "chembl"
+    return new_df
+
+
+class Merge(Transform):
+    def __init__(
+        self,
+        merged_entries_file_id: ResourceId,
+        pre_merged_mapping_file_id: ResourceId,
+        post_merged_mapping_file: File,
+        raw_data_parquet: Parquet,
+    ) -> None:
+        super().__init__(
+            offers=[post_merged_mapping_file, raw_data_parquet],
+            requires=[merged_entries_file_id, pre_merged_mapping_file_id],
+        )
+        self.merged_entries_file_id = merged_entries_file_id
+        self.pre_merged_mapping_file_id = pre_merged_mapping_file_id
+        self.post_merged_mapping_file = post_merged_mapping_file
+        self.raw_data_parquet = raw_data_parquet
+
+    def _do_work(self, context: "Resources") -> None:
+        merged_entries = context[self.merged_entries_file_id].read_full()
+        merged_entries = add_id(merged_entries, RAW_DATA_PK)
+        self.raw_data_parquet.save(merged_entries, logger=self.logger)
+
+        pre_merged_mapping = context[self.pre_merged_mapping_file_id].read_full()
+        post_merged_mapping = pd.concat(
+            [pre_merged_mapping, extract_names(merged_entries)]
+        )
+        self.post_merged_mapping_file.save(post_merged_mapping, logger=self.logger)
 
 
 class Spec(ETLSpec):
@@ -295,47 +362,31 @@ class Spec(ETLSpec):
     class Raw:
         applicants = Simple()
         atc_code_description = Simple()
-        atc_classifications = Simple()
-        atc_classification = Simple()
         availability_type = Simple()
         biotherapeutic = Simple()
         black_box = Simple()
         black_box_warning = Simple()
-        chebi_par_id = Simple()
         chirality = Simple()
-        cross_references = Simple()
         development_phase = Simple()
-        dosed_ingredient = Simple()
         drug_type = Simple()
         first_approval = Simple()
         first_in_class = Simple()
         helm_notation = Simple()
         indication_class = Simple()
-        inorganic_flag = Simple()
-        max_phase = Simple()
         molecule_chembl_id = Simple(terms=[ChEMBLid()])
-        molecule_hierarchy = Simple()
         molecule_properties = Simple()
         molecule_structures = Simple()
         molecule_synonyms = Simple()
-        molecule_type = Simple()
-        natural_product = Simple()
         ob_patent = Simple()
         oral = Simple()
         parenteral = Simple()
-        polymer_flag = Simple()
-        pref_name = Simple()
         prodrug = Simple()
         research_codes = Simple()
         rule_of_five = Simple()
         sc_patent = Simple()
-        structure_type = Simple()
         synonyms = Simple()
-        therapeutic_flag = Simple()
         topical = Simple()
-        usan_stem = Simple()
         usan_stem_definition = Simple()
-        usan_substem = Simple()
         usan_stem_substem = Simple()
         usan_year = Simple()
         withdrawn_flag = Simple()
@@ -343,3 +394,5 @@ class Spec(ETLSpec):
         withdrawn_country = Simple()
         withdrawn_reason = Simple()
         withdrawn_year = Simple()
+        # {'molecule_structures', 'chebi_par_id', 'polymer_flag', 'indication_class', 'atc_classifications',
+        # 'rule_of_five', 'usan_year', 'parenteral', 'applicants', 'inorganic_flag', 'usan_substem', 'chirality', 'withdrawn_year', 'helm_notation', 'molecule_properties', 'withdrawn_reason', 'development_phase', 'withdrawn_flag', 'sc_patent', 'research_codes', 'withdrawn_class', 'dosed_ingredient', 'prodrug', 'atc_code_description', 'pref_name', 'withdrawn_country', 'molecule_type', 'structure_type', 'black_box_warning', 'first_approval', 'biotherapeutic', 'availability_type', 'first_in_class', 'usan_stem_substem', 'black_box', 'natural_product', 'molecule_synonyms', 'topical', 'ob_patent', 'cross_references', 'drug_type', 'atc_classification', 'max_phase', 'usan_stem_definition', 'therapeutic_flag', 'molecule_hierarchy', 'molecule_chembl_id', 'synonyms', 'oral', 'usan_stem'

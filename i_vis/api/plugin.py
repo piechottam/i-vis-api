@@ -112,7 +112,7 @@ class BasePlugin:
     # container for ALL registered plugin names
     NAME2PLUGIN: MutableMapping[str, Type["BasePlugin"]] = {}
 
-    # container  plugin instances
+    # container plugin instances
     _INSTANCES: MutableMapping[str, "BasePlugin"] = {}
 
     def __init__(
@@ -168,7 +168,7 @@ class BasePlugin:
 
     @classmethod
     def type(cls) -> str:
-        return "Plugin"
+        return cls.__name__
 
     def register_tasks(self, force: bool = False) -> Sequence["Task"]:
         """Register all tasks of this plugin."""
@@ -214,16 +214,16 @@ class BasePlugin:
     def import_plugins(cls) -> None:
         raise NotImplementedError
 
-    @staticmethod
-    def pnames(
-        include_disabled: bool = False, ptype: Optional[str] = None
-    ) -> Sequence[str]:
+    @classmethod
+    def pnames(cls, include_disabled: bool = False) -> Sequence[str]:
         """All or only enabled plugin names"""
 
         names = [
             pname
             for pname in BasePlugin.NAME2PLUGIN
-            if include_helper(pname, include_disabled=include_disabled, ptype=ptype)
+            if include_helper(
+                pname, include_disabled=include_disabled, plugin_class=cls
+            )
         ]
         names.sort()
         return names
@@ -233,7 +233,11 @@ class BasePlugin:
         """Get plugin instance"""
 
         try:
-            return BasePlugin._INSTANCES[name]
+            plugin = BasePlugin._INSTANCES[name]
+            if not isinstance(plugin, cls):
+                raise UnknownPlugin(pname=plugin.name)
+
+            return plugin
         except KeyError as e:
             raise UnknownPlugin(pname=name) from e
 
@@ -241,9 +245,7 @@ class BasePlugin:
     def instances(cls) -> Sequence["BasePlugin"]:
         """Instances of all plugins"""
 
-        return tuple(
-            cls.get(pname) for pname in cls.pnames() if isinstance(cls.get(pname), cls)
-        )
+        return tuple(BasePlugin._INSTANCES[pname] for pname in cls.pnames())
 
     @staticmethod
     def register_pname(pname: str, plugin: Type["BasePlugin"]) -> None:
@@ -473,12 +475,14 @@ def is_plugin(name: str) -> bool:
 
 
 def include_helper(
-    pname: str, include_disabled: bool, ptype: Optional[str] = None
+    pname: str,
+    include_disabled: bool,
+    plugin_class: Optional[Type["BasePlugin"]] = None,
 ) -> bool:
     if pname not in BasePlugin.NAME2PLUGIN:
         return False
 
-    if ptype and BasePlugin.NAME2PLUGIN[pname].type() != ptype:
+    if plugin_class and not issubclass(BasePlugin.NAME2PLUGIN[pname], plugin_class):
         return False
 
     if include_disabled:
@@ -825,10 +829,6 @@ class DataSource(BasePlugin, ABC):
         return dict(self.etl_manager.part2etl)
 
     @classmethod
-    def type(cls) -> str:
-        return "Data Source"
-
-    @classmethod
     def get(cls, name: str) -> "DataSource":
         return cast("DataSource", super().get(name))
 
@@ -855,10 +855,6 @@ class CoreType(BasePlugin, ABC):
     @property
     def short_name(self) -> str:
         return CoreType.get_short_name(self.meta)
-
-    @classmethod
-    def type(cls) -> str:
-        return "Core Type"
 
     @property
     def blueprint_name(self) -> str:

@@ -200,7 +200,7 @@ class Term(ma.Schema):
 
 
 class ColumnDesc(ma.Schema):
-    terms = ma.Nested(Term(exclude=("children",)), many=True)
+    # TODO otherwise duplicate TERM terms = ma.Nested(Term(exclude=("children",)), many=True)
     jsonify = ma.Bool(missing=False)
     expose = ma.Bool(missing=False)
 

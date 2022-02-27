@@ -11,7 +11,16 @@ CIViC
 """
 
 import io
-from typing import Any, MutableSequence, TYPE_CHECKING, cast, Optional
+from typing import (
+    cast,
+    Any,
+    MutableSequence,
+    TYPE_CHECKING,
+    Optional,
+    Mapping,
+    Union,
+    Iterable,
+)
 
 import pandas as pd
 
@@ -20,7 +29,7 @@ from i_vis.core.version import Date as DateVersion
 from . import meta
 from ... import db
 from ... import terms as t
-from ...df_utils import DataFrameIO, tsv_io
+from ...df_utils import PandasDataFrameIO, tsv_io
 from ...etl import Exposed, Simple, ETLSpec, ExposeInfo
 from ...plugin import DataSource
 from ...utils import VariableUrl as Url
@@ -29,7 +38,6 @@ from ...utils import VariableUrl as Url
 if TYPE_CHECKING:
     from ...resource import Resource
     from ...utils import I_VIS_Logger
-    from ...df_utils import AnyDataFrame
 
 _URL_PREFIX = "https://civicdb.org/downloads/nightly/nightly-"
 
@@ -72,47 +80,47 @@ class Plugin(DataSource):
 # Last column is incorrectly expanded with "\t" instead of ",".
 # The number of columns differs between rows.
 # Fix by merging overhanging columns
-class CustomIO(DataFrameIO):
-    def __init__(self) -> None:
-        super().__init__(read_callback="read_csv", read_opts={"sep": "\t"})
+class CustomIO(PandasDataFrameIO):
+    def __init__(self, read_opts: Optional[Mapping[str, Any]] = None) -> None:
+        if not read_opts:
+            read_opts_ = {}
+        else:
+            read_opts_ = dict(read_opts)
+        read_opts_.setdefault("sep", "\t")
+
+        super().__init__(read_callback="read_csv", read_opts=read_opts_)
 
     def _read_df(
         self, in_res: "Resource", logger: Optional["I_VIS_Logger"] = None, **kwargs: Any
-    ) -> pd.DataFrame:
+    ) -> Union[pd.DataFrame, Iterable[pd.DataFrame]]:
         read_opts = dict(self._read_opts)
         if kwargs:
-            read_opts.update(read_opts)
+            read_opts.update(kwargs)
         sep = read_opts["sep"]
         with open(in_res.qname, "r") as file:
             fixed = io.StringIO()
             header: MutableSequence[str] = []
+            col_index = -1
             for row in file:
                 cols = row.split(sep)
                 if not header:
                     header.extend(cols)
+                    col_index = cols.index("assertion_ids")
                 else:
-                    header_len = len(header)
-                    col_count = len(cols)
-                    if header_len > col_count:
-                        cols.extend((header_len - col_count) * [""])
-                    elif header_len < col_count:
-                        last_col = header_len - 1
-                        cols[last_col] = ",".join(cols[last_col:col_count])
-                        cols = cols[0:header_len]
+                    ids = cols[col_index]
+                    if ids:
+                        ids_len = len(ids.split(","))
+                        urls = ",".join(cols[col_index + 1 : col_index + 1 + ids_len])
+                        del cols[col_index + 1 : col_index + 1 + ids_len]
+                        cols.insert(col_index + 1, urls)
                 row = sep.join(cols)
                 fixed.write(row)
             fixed.seek(0)
-            df = getattr(pd, self._read_callback)(fixed, **kwargs)
-            return cast(pd.DataFrame, df)
+            df = getattr(pd, self._read_callback)(fixed, **read_opts)
+            if not isinstance(df, pd.DataFrame):
+                return cast(Iterable[pd.DataFrame], df)
 
-    def _write_df(
-        self,
-        out_res: "Resource",
-        df: "AnyDataFrame",
-        logger: Optional["I_VIS_Logger"] = None,
-        **kwargs: Any,
-    ) -> None:
-        raise NotImplementedError
+            return df
 
 
 class GeneSummary(ETLSpec):
@@ -143,8 +151,8 @@ class GeneSummary(ETLSpec):
 class VariantSummary(ETLSpec):
     class Extract:
         url = Url(_VARIANT_SUMMARIES_URL_VAR, latest=True)
-        add_id = True
         io = CustomIO()
+        add_id = True
 
         class Raw:
             variant_id = Simple()

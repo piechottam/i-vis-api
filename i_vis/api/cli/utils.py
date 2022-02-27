@@ -1,5 +1,5 @@
 import re
-from typing import Any, cast, Optional, Sequence, Set
+from typing import Any, cast, Optional, Sequence, Set, MutableSequence
 
 import click
 from click.core import Context
@@ -9,7 +9,7 @@ from .. import db
 from ..models import PluginVersion, User
 from ..resource import ResourceId, res_registry as res_registry
 from ..task.base import TaskType, Run
-from ..plugin import BasePlugin, DataSource
+from ..plugin import BasePlugin, CoreType, DataSource
 from ..plugin_exceptions import UnknownPlugin, WrongPluginType
 
 
@@ -77,7 +77,10 @@ def validate_data_source(ctx: Context, param: Any, value: Any) -> "DataSource":
 # pylint: disable=unused-argument
 def validate_plugins(ctx: Context, param: Any, values: Any) -> Sequence["BasePlugin"]:
     if not values:
-        return BasePlugin.instances()
+        instances: MutableSequence[BasePlugin] = []
+        instances.extend(CoreType.instances())
+        instances.extend(DataSource.instances())
+        return instances
 
     return tuple(validate_plugin(ctx, param, pname) for pname in values)
 

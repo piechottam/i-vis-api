@@ -4,6 +4,7 @@ from typing import (
     Callable,
     cast,
     Hashable,
+    Iterable,
     Iterator,
     Optional,
     Sequence,
@@ -12,8 +13,10 @@ from typing import (
     Union,
 )
 from abc import ABC
-from functools import partial
+from functools import partial, cache
+import math
 from dask import dataframe as dd
+import orjson
 
 import numpy as np
 import pandas as pd
@@ -24,8 +27,9 @@ from i_vis.core.db_utils import i_vis_col
 from i_vis.core.config import get_ivis
 
 from .utils import getLogger
-from .db_utils import PK
+from .db_utils import RAW_DATA_PK
 from .resource import File, Parquet
+from .config_utils import CHUNKSIZE
 
 
 if TYPE_CHECKING:
@@ -43,7 +47,7 @@ PD_TO_CSV_OPTS = {
 }
 
 
-RAW_DATA_ID = i_vis_col("raw_data_id")
+RAW_DATA_FK = i_vis_col("raw_data_id")
 
 
 def clean_df(df: pd.DataFrame) -> pd.DataFrame:
@@ -58,10 +62,10 @@ def clean_df(df: pd.DataFrame) -> pd.DataFrame:
 AnyDataFrame = Union[pd.DataFrame, dd.DataFrame]
 
 
-class DataFrameIterator(Iterator[pd.DataFrame]):
+class DataFrameIterable(Iterable[pd.DataFrame]):
     def __init__(
         self,
-        dfs: Iterator[pd.DataFrame],
+        dfs: Iterable[pd.DataFrame],
         in_res: "Resource",
         normalize: bool,
         check: bool,
@@ -74,12 +78,24 @@ class DataFrameIterator(Iterator[pd.DataFrame]):
         self.logger = logger
 
     def __iter__(self) -> "DataFrameIterator":
-        return self
+        return DataFrameIterator(self)
+
+
+class DataFrameIterator(Iterator[pd.DataFrame]):
+    def __init__(self, iterable: DataFrameIterable) -> None:
+        self.iterable = iterable
+        self.iter = iter(iterable.dfs)
+        self.first = True
 
     def __next__(self) -> pd.DataFrame:
-        df = next(self.dfs)
-        df = DataFrameIO.check_df(df, self.in_res, self.normalize, self.check)
-        self.check = False
+        df = next(self.iter)
+        df = DataFrameIO.check_df(
+            df,
+            self.iterable.in_res,
+            self.iterable.normalize,
+            self.iterable.check and self.first,
+        )
+        self.first = False
         return df
 
 
@@ -117,7 +133,7 @@ class DataFrameIO(ABC):
         check: Optional[bool] = None,
         logger: Optional["I_VIS_Logger"] = None,
         **kwargs: Any,
-    ) -> Union[pd.DataFrame, dd.DataFrame, Iterator[pd.DataFrame]]:
+    ) -> Union[pd.DataFrame, dd.DataFrame, Iterable[pd.DataFrame]]:
         logger = self._logger(logger)
         df = self._read_df(in_res, logger, **kwargs)
 
@@ -127,7 +143,7 @@ class DataFrameIO(ABC):
         if isinstance(df, (pd.DataFrame, dd.DataFrame)):
             return self.check_df(df, in_res, normalize, check, logger)
 
-        return DataFrameIterator(df, in_res, normalize, check, logger)
+        return DataFrameIterable(df, in_res, normalize, check, logger)
 
     @staticmethod
     def check_df(
@@ -151,7 +167,7 @@ class DataFrameIO(ABC):
 
     def _read_df(
         self, in_res: "Resource", logger: Optional["I_VIS_Logger"] = None, **kwargs: Any
-    ) -> Union[AnyDataFrame, Iterator[pd.DataFrame]]:
+    ) -> Union[AnyDataFrame, Iterable[pd.DataFrame]]:
         raise NotImplementedError
 
     def write(
@@ -197,7 +213,7 @@ class DataFrameIO(ABC):
         raise NotImplementedError
 
     @staticmethod
-    def to_full(df: Union[Iterator[pd.DataFrame], AnyDataFrame]) -> pd.DataFrame:
+    def to_full(df: Union[Iterable[pd.DataFrame], AnyDataFrame]) -> pd.DataFrame:
         if isinstance(df, pd.DataFrame):
             return df
 
@@ -210,7 +226,7 @@ class DataFrameIO(ABC):
 class PandasDataFrameIO(DataFrameIO):
     def _read_df(
         self, in_res: "Resource", logger: Optional["I_VIS_Logger"] = None, **kwargs: Any
-    ) -> Union[pd.DataFrame, Iterator[pd.DataFrame]]:
+    ) -> Union[pd.DataFrame, Iterable[pd.DataFrame]]:
         read_opts = dict(self._read_opts)
         if kwargs:
             read_opts.update(kwargs)
@@ -218,10 +234,15 @@ class PandasDataFrameIO(DataFrameIO):
             read_opts.pop("chunksize", None)
 
         df = getattr(pd, self._read_callback)(in_res.qname, **read_opts)
-        if isinstance(df, pd.DataFrame):
-            return df
+        if isinstance(df, pd.DataFrame) and "chunksize" in kwargs:
+            return self.chunk(df, kwargs["chunksize"])
 
-        return cast(Iterator[pd.DataFrame], df)
+        return cast(Iterable[pd.DataFrame], df)
+
+    @staticmethod
+    def chunk(df: pd.DataFrame, chunksize: int) -> Iterable[pd.DataFrame]:
+        sections = math.ceil(df.shape[0] / chunksize)
+        return cast(Sequence[pd.DataFrame], np.array_split(df, sections))
 
     def _write_df(
         self,
@@ -252,7 +273,12 @@ class DaskDataFrameIO(DataFrameIO):
         read_opts = dict(self._read_opts)
         if kwargs:
             read_opts.update(kwargs)
-        df = getattr(pd, self._read_callback)(in_res.qname, **kwargs)
+        if self._read_callback == "read_parquet":
+            read_opts.pop("chunksize", None)
+            # TODO set partition size
+
+        df = getattr(dd, self._read_callback)(in_res.qname, **read_opts)
+        breakpoint()
         return cast(dd.DataFrame, df)
 
     def _write_df(
@@ -264,26 +290,6 @@ class DaskDataFrameIO(DataFrameIO):
     ) -> None:
         if isinstance(df, pd.DataFrame):
             df = dd.from_pandas(df, npartitions=1)
-
-        # TODO
-        #    if to == "to_csv":
-        #        kwargs.setdefault("sep", "\t")
-        #        kwargs.setdefault("index", False)
-        #        if isinstance(df, dd.DataFrame):
-        #            tmp_dir = os.path.join(out_res.qname + "-dask", "*.tsv")
-        #            fnames = df.to_csv(tmp_dir, **kwargs)
-        #            _ = merge_files(in_fnames=fnames, out_fname=out_fname)
-        #            shutil.rmtree(tmp_dir)
-        #        elif isinstance(df, DataFrame):
-        #            df.to_csv(out_fname, **kwargs)
-        #        else:
-        #            raise ValueError
-
-        #    elif to == "to_parquet":
-        #        df.to_parquet(out_fname, overwrite=True, **kwargs)
-        #    else:
-        #        getattr(df, to)(out_fname, **kwargs)
-
         to_opts = dict(self._to_opts)
         if kwargs:
             to_opts.update(kwargs)
@@ -316,11 +322,90 @@ class ParquetIO(DaskDataFrameIO):
         super().__init__(**kwargs)
 
 
-parquet_io = ParquetIO()
+class FlatParquetIO(DaskDataFrameIO):
+    def __init__(self, **kwargs: Any) -> None:
+        kwargs["read_callback"] = "read_parquet"
+        kwargs["to_callback"] = "to_parquet"
+        kwargs["engine"] = "pyarrow"
+        super().__init__(**kwargs)
 
+    @cache
+    def header(self, in_res: "Resource", logger: Optional["I_VIS_Logger"] = None, **kwargs: Any) -> Sequence[str]:
+        df = super()._read_df(in_res=in_res, logger=logger, **kwargs)
+        return self.loads(df.loc[0, "json"].compute()[0])
+
+    def _compute(self, *args: Any, **kwargs: Any) -> Any:
+        
+
+    def _read_df(
+        self, in_res: "Resource", logger: Optional["I_VIS_Logger"] = None, **kwargs: Any
+    ) -> dd.DataFrame:
+        df = super()._read_df(in_res=in_res, logger=logger, **kwargs)
+        if isinstance(df, dd.DataFrame):
+            header = self.header(in_res, logger, **kwargs)
+            df = df[1:, :]
+            df = df.map_paritions(
+
+            )
+
+            breakpoint()
+        else:
+            raise TypeError
+        return df
+
+    @staticmethod
+    def dumps(x: pd.Series) -> bytes:
+        return orjson.dumps(x.tolist())
+
+    @staticmethod
+    def loads(s: str) -> Sequence[str]:
+        return orjson.loads(s)
+
+    def _write_df(
+        self,
+        out_res: "Resource",
+        df: AnyDataFrame,
+        logger: Optional["I_VIS_Logger"] = None,
+        **kwargs: Any,
+    ) -> None:
+        header = df.columns.tolist()
+        if isinstance(df, dd.DataFrame):
+            df = dd.DataFrame(
+                {
+                    "json": df[df.columns].map_apply(orjson.dumps, axis=1),
+                },
+                index=df.index.copy(),
+            )
+        elif isinstance(df, pd.DataFrame):
+            df = pd.DataFrame(
+                {
+                    "json": df[df.columns].apply(self.dumps, axis=1),
+                },
+                index=df.index.copy(),
+            )
+            df = pd.concat(
+                [
+                    pd.DataFrame(
+                        {"json": orjson.dumps(header)},
+                        index=[0],
+                    ),
+                    df,
+                ]
+            )
+        else:
+            raise TypeError
+
+        df.index.name = RAW_DATA_PK
+        super()._write_df(out_res=out_res, df=df, logger=logger, **kwargs)
+
+
+parquet_io = ParquetIO()
+flat_parquet_io = FlatParquetIO()
 tsv_io = TsvIO()
 csv_io = PandasDataFrameIO(read_callback="read_csv", to_callback="to_csv")
-json_io = PandasDataFrameIO(read_callback="read_json", to_callback="to_json", to_opts={"indent": 2})
+json_io = PandasDataFrameIO(
+    read_callback="read_json", to_callback="to_json", to_opts={"indent": 2}
+)
 
 
 def normalize_columns_helper(s: str) -> str:
@@ -392,8 +477,8 @@ def add_id(
 
 
 def add_pk(df: pd.DataFrame, overwrite: bool = False, start: int = 1) -> pd.DataFrame:
-    if overwrite or PK not in df.columns:
-        df = add_id(df, col=PK, start=start)
+    if overwrite or RAW_DATA_PK not in df.columns:
+        df = add_id(df, col=RAW_DATA_PK, start=start)
     return df
 
 
@@ -488,24 +573,30 @@ def convert_to_parquet(
     out_parquet: "Parquet",
     col: str,
     func: Optional["DataFrameModifier"] = None,
+    chunksize: Optional[int] = None,
+    overwrite: bool = True,
 ) -> int:
+    chunksize = chunksize or get_ivis("CHUNKSIZE", CHUNKSIZE)
     line_count = 0
     assert in_file.io is not None
-    dfs = in_file.io.read(
-        in_file, check=True, normalize=True, chunksize=get_ivis("CHUNKSIZE", 25e4)
-    )
+    dfs = in_file.io.read(in_file, check=True, normalize=True, chunksize=chunksize)
     for df in dfs:
         if func:
             df = func(df)
             if df.empty:
                 continue
+
         df_len = len(df)
-        df.insert(
-            0,
-            col,
-            pd.Series(range(line_count + 1, line_count + 1 + df_len), dtype="Int64"),
-        )
-        df.set_index(col, inplace=True)
+        if not col in df.columns:
+            values = pd.Series(
+                range(line_count + 1, line_count + 1 + df_len), dtype="int64", name=col
+            )
+            df.set_index(values, inplace=True)
+        elif overwrite:
+            df[col] = pd.Series(
+                range(line_count + 1, line_count + 1 + df_len), dtype="int64"
+            )
+            df.set_index(col, drop=True, inplace=True)
 
         df = dd.from_pandas(df, npartitions=1)
         opts = {}
