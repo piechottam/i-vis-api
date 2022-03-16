@@ -43,7 +43,7 @@ from .db_utils import (
 from .terms import Term, TermType, TermTypes
 from .utils import BaseUrl
 from .plugin import CoreType, BasePlugin, UpdateManager
-from .df_utils import RAW_DATA_FK
+from .df_utils import RAW_DATA_FK, DataFrameIO
 from .resource import Parquet
 from .config_utils import CHUNKSIZE
 
@@ -214,7 +214,7 @@ class ExtractOpts:
         self._out_fname = str(getattr(opts, "out_fname", ""))
 
         # or use existing i-vis resource
-        self.rid: "ResourceId" = getattr(opts, "rid", "")
+        self.rid: Optional["ResourceId"] = getattr(opts, "rid", None)
 
         # if not self.rid and not self.url and not self.info:
         #    raise Exception("Neither 'url', 'info', or 'rid' are set")
@@ -226,10 +226,10 @@ class ExtractOpts:
             raise Exception("'url' and 'rid' cannot be set at the same time.")
 
         # unpack?
-        self.unpack = getattr(opts, "unpack", False)
+        self.unpack: bool = getattr(opts, "unpack", False)
 
         # how to read as data frame
-        self.io = getattr(opts, "io", None)
+        self.io: Optional[DataFrameIO] = getattr(opts, "io", None)
 
         self.raw_columns = None
         if hasattr(opts, "Raw"):
@@ -263,6 +263,7 @@ class ExtractOpts:
 
         return add_id_opts
 
+    # TODO check instance unpack True|False
     @cached_property
     def out_fname(self) -> str:
         if self._out_fname:
@@ -626,18 +627,18 @@ class ETL:
 
         def harmonized_data(self_: Any) -> Mapping[str, Any]:
             return {
-                core_type.clean_name: getattr(
-                    self_, f"harmonized_{core_type.clean_name}"
+                core_type_.clean_name: getattr(
+                    self_, f"harmonized_{core_type_.clean_name}"
                 )
-                for core_type in self.core_types
+                for core_type_ in self.core_types
             }
 
         def processed_data(self_: Any) -> Mapping[str, Any]:
             return {
-                core_type.clean_name: getattr(
-                    self_, f"i_vis_raw_{core_type.clean_name}"
+                core_type_.clean_name: getattr(
+                    self_, f"i_vis_raw_{core_type_.clean_name}"
                 )
-                for core_type in self.core_types
+                for core_type_ in self.core_types
             }
 
         # class name for mapped class

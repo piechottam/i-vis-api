@@ -14,6 +14,7 @@ from typing import (
     Callable,
     Union,
     Generator,
+    Iterator,
 )
 from zipfile import ZipFile
 from abc import ABC
@@ -32,7 +33,6 @@ from i_vis.core.config import get_ivis
 from .base import Task, TaskType
 from ..df_utils import (
     sort_prefixed,
-    add_id,
     RAW_DATA_FK,
     loc,
     ParquetIO,
@@ -40,6 +40,7 @@ from ..df_utils import (
     convert_to_parquet,
     clean_df,
 )
+from .. import df_utils
 from ..resource import File, Parquet
 from ..db_utils import RAW_DATA_PK
 from ..utils import to_str
@@ -103,6 +104,7 @@ class Unpack(Transform):
 
 
 class BuildDict(Transform):
+    # pylint: disable=too-many-instance-attributes
     def __init__(
         self,
         in_rids: "ResourceIds",
@@ -159,7 +161,7 @@ class BuildDict(Transform):
             breakpoint()
 
         # filter entities with id = name
-        is_id = cast(pd.Series, df[self.target_id] == df["name"])
+        is_id = df[self.target_id] == df["name"]
         if is_id.any():
             df = df[~is_id]
             self.logger.info(f"{sum(is_id)} removed {self.target_id}")
@@ -184,7 +186,7 @@ class BuildDict(Transform):
 
         # store entities
         entities = pd.DataFrame({self.target_id: df[self.target_id].unique()})
-        entities = add_id(entities, "id")
+        entities = df_utils.add_id(entities, "id")
 
         self.logger.info(f"{len(entities)} unique {self.target_id} entities")
         self.entities.save(entities, logger=self.logger)
@@ -207,7 +209,7 @@ class BuildDict(Transform):
             .groupby([self.target_id, "name"], as_index=False)
             .agg(agg)
         )
-        df_names = add_id(df_names, col="id")
+        df_names = df_utils.add_id(df_names, col="id")
         self.logger.info(f"{len(df_names)} unique {self.target_id} <-> raw names")
         self.names.save(
             df_names[["id"] + cols],
@@ -259,8 +261,8 @@ class Process(Transform):
             df = df.map_partitions(self._process, context=context)
         elif isinstance(df, pd.DataFrame):
             df = self._process(df, context)
-        else:
-            df = pd.concat(df)
+        elif isinstance(df, Iterator):
+            df = pd.concat(df)  # type: ignore
             df = self._process(df, context)
 
         if self.out_res.desc is not None:
@@ -355,7 +357,7 @@ class HarmonizeRawData(Transform):
                 file.dirty = True
 
     # pylint: disable=too-many-locals
-    def _do_dask_work(self, df: dd, core_types: Sequence["CoreType"]) -> None:
+    def _do_dask_work(self, raw_data: dd, core_types: Sequence["CoreType"]) -> None:
         breakpoint()
         for core_type in core_types:
             harmonizer = core_type.harmonizer
@@ -364,16 +366,20 @@ class HarmonizeRawData(Transform):
             # column modifier
             for col in self.raw_columns.core_type2cols.get(core_type, []):
                 if self.raw_columns[col].modifier:
-                    df = df.map_partitions(self.raw_columns[col].modify, col=col)
+                    raw_data = raw_data.map_partitions(
+                        self.raw_columns[col].modify, col=col
+                    )
 
             # dataframe modifier
             harm_modifier = desc.harm_modifier
             if harm_modifier is not None:
-                df = df.map_partitions(harm_modifier.modifier)
+                raw_data = raw_data.map_partitions(harm_modifier.modifier)
 
             cols = list(desc.cols)
-            df = df[[RAW_DATA_PK] + cols].rename(columns={RAW_DATA_PK: RAW_DATA_FK})
-            result = df.map_partitions(harmonizer.harmonize, cols=cols)
+            raw_data = raw_data[[RAW_DATA_PK] + cols].rename(
+                columns={RAW_DATA_PK: RAW_DATA_FK}
+            )
+            result = raw_data.map_partitions(harmonizer.harmonize, cols=cols)
             harmonized = result.map_partitions(harmonizer.harmonized)
             not_harmonized = result.map_partitions(harmonizer.not_harmonized)
             targets = list(core_type.harm_meta.targets)
@@ -453,14 +459,14 @@ def sort_by_targets(df: "AnyDataFrame", targets: Sequence[str]) -> "AnyDataFrame
 class ConvertXML(BaseModifier):
     # pylint: disable=too-many-arguments
     def __init__(
-            self,
-            in_rid: "ResourceId",
-            getter: Callable[[Dict[Any, Any]], Dict[Any, Any]],
-            io: DataFrameIO,
-            out_fname: str,
-            to_opts: Optional[Mapping[str, Any]] = None,
-            add_id: bool = False,
-            **kwargs: Any,
+        self,
+        in_rid: "ResourceId",
+        getter: Callable[[Dict[Any, Any]], Dict[Any, Any]],
+        io: DataFrameIO,
+        out_fname: str,
+        to_opts: Optional[Mapping[str, Any]] = None,
+        add_id: bool = False,
+        **kwargs: Any,
     ) -> None:
         kwargs["io"] = io
         super().__init__(
@@ -475,13 +481,13 @@ class ConvertXML(BaseModifier):
 
     def _do_work(self, context: "Resources") -> None:
         in_file = context.file(self.in_rid)
-        with open(in_file.qname, "r") as in_f:
+        with open(in_file.qname, "r", encoding="utf8") as in_f:
             xml = in_f.read()
             dt = xmltodict.parse(xml)
             del xml
             df = pd.DataFrame(self.getter(dt))
             if self.add_id:
-                df = add_id(df, RAW_DATA_PK)
+                df = df_utils.add_pk(df)
                 df.set_index(RAW_DATA_PK, drop=True, inplace=True)
             self.out_res.save(df, logger=self.logger, **self.to_opts)
 

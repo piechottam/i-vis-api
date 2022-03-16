@@ -70,6 +70,7 @@ def parse_ref(ref: str) -> str:
     return str(infer_namespace(ref))
 
 
+# TODO test
 def harmonize_aa1_to_aa3(desc: Series) -> Series:
     desc = desc.str.extract(AA1_REGEX)
 
@@ -80,4 +81,4 @@ def harmonize_aa1_to_aa3(desc: Series) -> Series:
     desc.loc[na3, 3] = desc.loc[na3, 3].map(aa1_to_aa3_lut)
     desc = desc.fillna("")
 
-    return cast(Series, desc.agg("".join, axis=1))  # type: ignore
+    return cast(Series, desc.agg("".join, axis=0))

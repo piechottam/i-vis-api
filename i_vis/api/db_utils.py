@@ -86,7 +86,7 @@ class CoreTypeMixin(ResDescMixin):
     id = db.Column(db.Integer, primary_key=True)
 
     @property
-    def related_data(self):
+    def related_data(self) -> pd.DataFrame:
         breakpoint()
         raise NotImplementedError
 

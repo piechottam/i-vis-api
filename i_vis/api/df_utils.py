@@ -63,6 +63,7 @@ AnyDataFrame = Union[pd.DataFrame, dd.DataFrame]
 
 
 class DataFrameIterable(Iterable[pd.DataFrame]):
+    # pylint: disable=too-many-arguments
     def __init__(
         self,
         dfs: Iterable[pd.DataFrame],
@@ -100,6 +101,7 @@ class DataFrameIterator(Iterator[pd.DataFrame]):
 
 
 class DataFrameIO(ABC):
+    # pylint: disable=too-many-arguments
     def __init__(
         self,
         read_callback: str,
@@ -278,7 +280,6 @@ class DaskDataFrameIO(DataFrameIO):
             # TODO set partition size
 
         df = getattr(dd, self._read_callback)(in_res.qname, **read_opts)
-        breakpoint()
         return cast(dd.DataFrame, df)
 
     def _write_df(
@@ -330,36 +331,39 @@ class FlatParquetIO(DaskDataFrameIO):
         super().__init__(**kwargs)
 
     @cache
-    def header(self, in_res: "Resource", logger: Optional["I_VIS_Logger"] = None, **kwargs: Any) -> Sequence[str]:
+    def header(
+        self, in_res: "Resource", logger: Optional["I_VIS_Logger"] = None, **kwargs: Any
+    ) -> Sequence[str]:
         df = super()._read_df(in_res=in_res, logger=logger, **kwargs)
-        return self.loads(df.loc[0, "json"].compute()[0])
+        return self.deserialize(df[0, "json"].compute()[0])
 
-    def _compute(self, *args: Any, **kwargs: Any) -> Any:
-        
+    @staticmethod
+    def serialize(df: pd.DataFrame) -> pd.DataFrame:
+        return orjson.dumps(df.tolist())
+
+    @staticmethod
+    def deserialize(df: dd.DataFrame, header: Sequence[str]) -> dd.DataFrame:
+        if not i_vis_col("json"):
+            return df
+
+        return df.map_partitions(FlatParquetIO._deserialize, header=header)
+
+    @staticmethod
+    def _deserialize(df: pd.DataFrame, header: Sequence[str]) -> pd.DataFrame:
+        obj = orjson.loads(df)
+        breakpoint()
+        return obj
 
     def _read_df(
         self, in_res: "Resource", logger: Optional["I_VIS_Logger"] = None, **kwargs: Any
     ) -> dd.DataFrame:
         df = super()._read_df(in_res=in_res, logger=logger, **kwargs)
         if isinstance(df, dd.DataFrame):
-            header = self.header(in_res, logger, **kwargs)
             df = df[1:, :]
-            df = df.map_paritions(
-
-            )
-
-            breakpoint()
         else:
             raise TypeError
+
         return df
-
-    @staticmethod
-    def dumps(x: pd.Series) -> bytes:
-        return orjson.dumps(x.tolist())
-
-    @staticmethod
-    def loads(s: str) -> Sequence[str]:
-        return orjson.loads(s)
 
     def _write_df(
         self,
@@ -370,23 +374,19 @@ class FlatParquetIO(DaskDataFrameIO):
     ) -> None:
         header = df.columns.tolist()
         if isinstance(df, dd.DataFrame):
-            df = dd.DataFrame(
-                {
-                    "json": df[df.columns].map_apply(orjson.dumps, axis=1),
-                },
-                index=df.index.copy(),
-            )
+            # TODO
+            breakpoint()
         elif isinstance(df, pd.DataFrame):
             df = pd.DataFrame(
                 {
-                    "json": df[df.columns].apply(self.dumps, axis=1),
+                    i_vis_col("json"): df[df.columns].apply(self.serialize, axis=1),
                 },
                 index=df.index.copy(),
             )
             df = pd.concat(
                 [
                     pd.DataFrame(
-                        {"json": orjson.dumps(header)},
+                        {i_vis_col("json"): self.serialize(header)},
                         index=[0],
                     ),
                     df,
@@ -465,21 +465,34 @@ def complex_explode(df: pd.DataFrame, cols: Sequence[str]) -> pd.DataFrame:
 
 
 # make sure df[col] is sorted ascending
-def add_id(
-    df: pd.DataFrame, col: str, start: int = 1, overwrite: bool = False
-) -> pd.DataFrame:
-    if not overwrite and col in df.columns:
-        df[col] = df[col].duplicated().cumsum() + start
-    else:
-        df.loc[:, [col]] = pd.Series(range(start, start + len(df)))
+def add_id(df: pd.DataFrame, col: str, start: int = 1) -> pd.DataFrame:
+    if col in df.columns:
+        raise ValueError(f"'{col}' already present in data frame.")
+
+    df.loc[:, [col]] = pd.Series(range(start, start + len(df)))
     df.loc[:, [col]] = df.loc[:, [col]].astype("Int64", copy=False)
     return df
 
 
-def add_pk(df: pd.DataFrame, overwrite: bool = False, start: int = 1) -> pd.DataFrame:
-    if overwrite or RAW_DATA_PK not in df.columns:
-        df = add_id(df, col=RAW_DATA_PK, start=start)
+def update_id(df: pd.DataFrame, col: str, start: int = 1) -> pd.DataFrame:
+    if col not in df.columns:
+        raise ValueError(f"'{col}' already present in data frame.")
+
+    dups = df[col].duplicated()
+    if dups.any():
+        breakpoint()  # TODO make efficient index of column with duplicates
+    else:
+        df.loc[:, [col]] = pd.Series(range(start, start + len(df)))
+        df.loc[:, [col]] = df.loc[:, [col]].astype("Int64", copy=False)
     return df
+
+
+def add_pk(df: pd.DataFrame, start: int = 1) -> pd.DataFrame:
+    return add_id(df, col=RAW_DATA_PK, start=start)
+
+
+def update_pk(df: pd.DataFrame, start: int = 1) -> pd.DataFrame:
+    return update_id(df, col=RAW_DATA_PK, start=start)
 
 
 class MissingColumnError(Exception):

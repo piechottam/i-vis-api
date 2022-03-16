@@ -137,7 +137,7 @@ def _create_default_app(config: Optional[type] = None) -> Flask:
     logging_conf = os.environ.get(
         variable_name("LOGGING_CONF"), resource_filename(__name__, "logging.yaml")
     )
-    with open(logging_conf) as file:
+    with open(logging_conf, encoding="utf8") as file:
         dict_config = yaml.safe_load(file.read())
         logging.config.dictConfig(dict_config)
 

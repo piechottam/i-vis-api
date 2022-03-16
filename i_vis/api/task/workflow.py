@@ -47,20 +47,24 @@ _TargetMapper = MutableMapping[str, Target]
 
 class TQDMProgressBar(Callback):
     def __init__(self, **kwargs: Any) -> None:
+        super().__init__(
+            start=self.__start, pretask=self.__pretask, posttask=self.__posttask
+        )
         self.tqdm = None
         self.tqdm_opts = kwargs
 
-    def _start(self, dsk: Mapping[str, Tuple[Any]]) -> None:
+    def __start(self, dsk: Mapping[str, Tuple[Any]]) -> None:
+        assert self.tqdm is not None
         self.tqdm = tqdm(total=len(dsk), **self.tqdm_opts, leave=False)
 
     # pylint: disable=unused-argument
-    def _pretask(self, key, dsk: Mapping[str, Any], state: Any) -> None:
+    def __pretask(self, key: str, dsk: Mapping[str, Any], state: Any) -> None:
         assert self.tqdm is not None
         self.tqdm.set_description_str(key)
 
     # pylint: disable=unused-argument
     # pylint: disable=too-many-arguments
-    def _posttask(
+    def __posttask(
         self,
         key: str,
         result: Any,
@@ -229,7 +233,7 @@ class Builder:
 
     @staticmethod
     def _add_values(rule: _Rule) -> None:
-        for value in {Builder.value_target("run"), Builder.value_target("config")}:
+        for value in set([Builder.value_target("run"), Builder.value_target("config")]):
             rule.add_required_target(value)
 
     def add_plugin(
@@ -284,7 +288,13 @@ class UpdatePlugin(Task):
         for task in self.plugin.task_builder.tasks():
             for offered in task.offered:
                 if offered.rid != self.out_res.rid:
-                    self.required_rids.add(offered.rid)
+                    try:
+                        self.required_rids.add(offered.rid)
+                    except Exception as e:
+                        for task_ in self.plugin.task_builder.tasks():
+                            print(task.tid)
+                            task_.required_rids.pprint()
+                        breakpoint()
 
     def _do_work(self, context: "Resources") -> None:
         plugin = self.plugin
@@ -301,7 +311,7 @@ class UpdatePlugin(Task):
         if not update and not self.required_rids.to_resources(context).dirty:
             return
 
-        with open(self.out_res.qname, "w") as f_out:
+        with open(self.out_res.qname, "w", encoding="utf8") as f_out:
             f_out.write(str(plugin.version.current))
         self.out_res.dirty = True
         self.out_res.update_db()

@@ -55,7 +55,7 @@ def get_auth(user: str = "", password: str = "") -> str:
     user = user or get_config()[_USER_VAR]
     password = password or get_config()[_PASS_VAR]
 
-    s = "{}:{}".format(user, password)
+    s = f"{user}:{password}"
     return b64encode(bytes(s, "utf-8")).decode("utf-8")
 
 
@@ -219,7 +219,7 @@ def clean_gene_name(df: DataFrame, col: str) -> DataFrame:
 
 
 def fix_hgnc_id(df: DataFrame, col: str) -> DataFrame:
-    df[i_vis_col(col)] = "HGNC:" + df[col].astype(str)  # type: ignore
+    df[i_vis_col(col)] = "HGNC:" + df[col].astype(str)
     return df
 
 

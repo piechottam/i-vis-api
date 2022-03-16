@@ -281,7 +281,7 @@ class Resource(ABC):
     ):
         for key, value in zip(["plugin", "name"], [pname, name]):
             if not value:
-                raise ValueError("'{}' must have a value".format(key))
+                raise ValueError(f"'{key}' must have a value")
 
         self.rid = ResourceId(self.type, pname, name)
         self.io = io
@@ -452,7 +452,7 @@ class Table(Resource):
         if not io:
             from .df_utils import PandasDataFrameIO
 
-            opts: MutableMapping[str, Any] = dict()
+            opts: MutableMapping[str, Any] = {}
             opts.setdefault("con", db.engine)
             io = PandasDataFrameIO(read_callback="read_sql_table", read_opts=opts)
         super().__init__(pname=pname, name=tname, io=io, desc=desc)

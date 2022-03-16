@@ -35,8 +35,7 @@ from ...df_utils import (
     parquet_io,
     tsv_io,
     DataFrameIO,
-    add_id,
-    RAW_DATA_PK,
+    update_pk,
 )
 from ...etl import ETLSpec, Simple
 from ...plugin import DataSource
@@ -345,7 +344,7 @@ class Merge(Transform):
 
     def _do_work(self, context: "Resources") -> None:
         merged_entries = context[self.merged_entries_file_id].read_full()
-        merged_entries = add_id(merged_entries, RAW_DATA_PK)
+        merged_entries = update_pk(merged_entries)
         self.raw_data_parquet.save(merged_entries, logger=self.logger)
 
         pre_merged_mapping = context[self.pre_merged_mapping_file_id].read_full()

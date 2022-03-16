@@ -513,7 +513,7 @@ class DirectoryManager:
     def pending(self) -> str:
         """Absolute working path for pending version"""
         if self._updater.pending is not None:
-            raise MissingPendingVersion
+            raise MissingPendingVersion(self._updater.pname)
 
         assert self._version_info.pending is not None
         return self.by_version(self._version_info.pending)

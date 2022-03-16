@@ -19,7 +19,6 @@ from pandas import DataFrame
 from i_vis.core.version import Default as DefaultVersion
 
 from . import meta
-from ... import terms as t
 from ...etl import Simple, ETLSpec, Modifier
 from ...plugin import DataSource
 from ...task.transform import VCF2Dataframe, Parser

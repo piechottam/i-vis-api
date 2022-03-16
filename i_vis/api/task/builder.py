@@ -146,8 +146,8 @@ class TaskBuilder:
         self,
         in_rid: ResourceId,
         out_fnames: Sequence[str],
-        ios: Optional[Sequence[DataFrameIO]] = None,
-        descs: Optional[Sequence[ResourceDesc]] = None,
+        ios: Optional[Sequence[Optional[DataFrameIO]]] = None,
+        descs: Optional[Sequence[Optional[ResourceDesc]]] = None,
     ) -> Tuple[Unpack, Tuple[File, ...]]:
         unpacked_files = unpack_files(
             pname=self._plugin.name,
@@ -192,7 +192,7 @@ class TaskBuilder:
 
         # TODO exposed columns in raw_data
         if etl.split_harm:
-            in_res_ids: MutableSequence["ResourceId"] = list()
+            in_res_ids: MutableSequence["ResourceId"] = []
             for harm_desc, files in harm_desc2files.items():
                 path = "_" + etl.part + "_" + harm_desc.core_type.short_name
                 path = Parquet.format_fname(path)
@@ -206,16 +206,10 @@ class TaskBuilder:
                     out_res=out_parquet,
                     raw_columns=etl.all_raw_columns,
                 )
-            if in_res_ids:
-                task = MergeRawData(in_res_ids=in_res_ids, out_file=out_res)
-                self.add_task(task)
-            else:
-                self.harmonize_raw_data(
-                    in_rid=in_rid,
-                    harm_desc2files=harm_desc2files,
-                    out_res=out_res,
-                    raw_columns=etl.all_raw_columns,
-                )
+            if not in_res_ids:
+                in_res_ids.append(in_rid)
+            task = MergeRawData(in_res_ids=in_res_ids, out_file=out_res)
+            self.add_task(task)
         else:
             self.harmonize_raw_data(
                 in_rid=in_rid,
@@ -317,7 +311,7 @@ class TaskBuilder:
 
     def _process_extract_opts(self, etl: "ETL") -> ResourceId:
         opts = getattr(etl, "extract_opts")
-        rid: ResourceId = getattr(opts, "rid", None)
+        rid: Optional[ResourceId] = getattr(opts, "rid", None)
         if rid:
             if opts.unpack:
                 rid = self._process_unpack(opts, rid)
@@ -377,7 +371,7 @@ class TaskBuilder:
 
         _, unpacked_files, = self.unpack(
             in_rid=rid,
-            out_fnames=(opts.unpack,),
+            out_fnames=(opts.out_fname,),
             ios=(io,),
             descs=descs,
         )

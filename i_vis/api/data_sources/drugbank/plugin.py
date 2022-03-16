@@ -189,7 +189,7 @@ class Spec(ETLSpec):
                 "out_fname": "_" + meta.name + ".parquet",
                 "io": flat_parquet_io,
                 "getter": lambda dt: dt["drugbank"]["drug"],
-                "add_id": True
+                "add_id": True,
             },
         )
 

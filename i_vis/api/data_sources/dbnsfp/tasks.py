@@ -9,7 +9,7 @@ if TYPE_CHECKING:
 
 _CHUNKSIZE = meta.register_variable(
     name="CHUNKSIZE",
-    default=5 * 10 ** 5,
+    default=5 * 10**5,
 )
 
 _COLS = [

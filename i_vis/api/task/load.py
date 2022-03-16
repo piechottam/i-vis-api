@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from ..resource import Resources
 
 
-CHUNKSIZE = 10 ** 5
+CHUNKSIZE = 10**5
 
 
 # pylint: disable=W0223

@@ -219,7 +219,7 @@ class FTP(Download):
                     pb.update(len(data))
                     file.write(data)
 
-                self.ftp.retrbinary("RETR {}".format(server_fname), callback)
+                self.ftp.retrbinary(f"RETR {server_fname}", callback)
 
 
 # pylint: disable=too-many-arguments
@@ -259,7 +259,7 @@ class HTTP(Download):
                     url,
                     request.status_code,
                 )
-                with open(dest + ".err", "w") as err_out:
+                with open(dest + ".err", "w", encoding="utf8") as err_out:
                     err_out.write(request.text)
                 raise ExtractFailed(self)
             with open(dest, "wb") as file:

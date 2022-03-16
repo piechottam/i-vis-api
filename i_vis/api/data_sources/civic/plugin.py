@@ -17,6 +17,7 @@ from typing import (
     MutableSequence,
     TYPE_CHECKING,
     Optional,
+    List,
     Mapping,
     Union,
     Iterable,
@@ -97,7 +98,7 @@ class CustomIO(PandasDataFrameIO):
         if kwargs:
             read_opts.update(kwargs)
         sep = read_opts["sep"]
-        with open(in_res.qname, "r") as file:
+        with open(in_res.qname, "r", encoding="utf8") as file:
             fixed = io.StringIO()
             header: MutableSequence[str] = []
             col_index = -1
@@ -107,12 +108,7 @@ class CustomIO(PandasDataFrameIO):
                     header.extend(cols)
                     col_index = cols.index("assertion_ids")
                 else:
-                    ids = cols[col_index]
-                    if ids:
-                        ids_len = len(ids.split(","))
-                        urls = ",".join(cols[col_index + 1 : col_index + 1 + ids_len])
-                        del cols[col_index + 1 : col_index + 1 + ids_len]
-                        cols.insert(col_index + 1, urls)
+                    cols = self._parse(cols, col_index)
                 row = sep.join(cols)
                 fixed.write(row)
             fixed.seek(0)
@@ -121,6 +117,18 @@ class CustomIO(PandasDataFrameIO):
                 return cast(Iterable[pd.DataFrame], df)
 
             return df
+
+    @staticmethod
+    def _parse(cols: List[str], col_index: int) -> List[str]:
+        ids = cols[col_index]
+        if ids:
+            ids_len = len(ids.split(","))
+            # fmt: off
+            urls = ",".join(cols[col_index + 1:col_index + 1 + ids_len])
+            del cols[col_index + 1:col_index + 1 + ids_len]
+            # fmt: on
+            cols.insert(col_index + 1, urls)
+        return cols
 
 
 class GeneSummary(ETLSpec):

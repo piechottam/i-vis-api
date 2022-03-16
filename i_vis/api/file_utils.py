@@ -155,7 +155,7 @@ def _data_frame(
     out = StringIO()
     out.writelines([line.decode() for line in lines])
     out.seek(0)
-    df = cast(DataFrame, pd.read_csv(out, sep="\t", names=columns))
+    df = cast(DataFrame, pd.read_csv(out, sep="\t", names=columns))  # type: ignore
     df["type"] = type_
     return df
 
