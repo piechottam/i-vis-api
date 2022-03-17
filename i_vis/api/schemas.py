@@ -188,7 +188,6 @@ class MachineStatus(IdMixin, _Base):
 class Term(ma.Schema):
     name = ma.Str()
     normalized_to = ma.Str(missing=None)
-    children = ma.Nested("self", many=True)
 
     @staticmethod
     def get_id(data: terms.Term) -> str:
@@ -199,8 +198,12 @@ class Term(ma.Schema):
         return "term"
 
 
+class Terms(Term):
+    children = ma.Nested("self", many=True)
+
+
 class ColumnDesc(ma.Schema):
-    # TODO otherwise duplicate TERM terms = ma.Nested(Term(exclude=("children",)), many=True)
+    terms = ma.Nested("Term", many=True)
     jsonify = ma.Bool(missing=False)
     expose = ma.Bool(missing=False)
 

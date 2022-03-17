@@ -277,7 +277,6 @@ class DaskDataFrameIO(DataFrameIO):
             read_opts.update(kwargs)
         if self._read_callback == "read_parquet":
             read_opts.pop("chunksize", None)
-            # TODO set partition size
 
         df = getattr(dd, self._read_callback)(in_res.qname, **read_opts)
         return cast(dd.DataFrame, df)

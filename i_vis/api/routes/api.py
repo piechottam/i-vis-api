@@ -116,7 +116,7 @@ class ApiVersion(MethodView):
 @api_blp.route(api_prefix("terms"), **{"endpoint": "terms"})
 class Terms(MethodView):
     @api_blp.arguments(arguments.Restricted, location="query")
-    @api_blp.response(200, schemas.response("Terms", schemas.Term))
+    @api_blp.response(200, schemas.response("Terms", schemas.Terms))
     # pylint: disable=unused-argument,no-self-use
     def get(self, _query_args: Mapping[str, Any]) -> Mapping[str, Any]:
         """List all terms

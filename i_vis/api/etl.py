@@ -226,7 +226,7 @@ class ExtractOpts:
             raise Exception("'url' and 'rid' cannot be set at the same time.")
 
         # unpack?
-        self.unpack: bool = getattr(opts, "unpack", False)
+        self.unpack: Optional[str] = getattr(opts, "unpack", None)
 
         # how to read as data frame
         self.io: Optional[DataFrameIO] = getattr(opts, "io", None)
@@ -263,7 +263,6 @@ class ExtractOpts:
 
         return add_id_opts
 
-    # TODO check instance unpack True|False
     @cached_property
     def out_fname(self) -> str:
         if self._out_fname:

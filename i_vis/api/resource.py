@@ -358,7 +358,6 @@ class Resource(ABC):
             or not self.working_update.check()[0]
         )
 
-    # TODO make faster accept pre calculated values
     def update_db(self, **kwargs: Any) -> "ResourceUpdate":
         plugin_update = self.plugin.updater.working
         assert plugin_update is not None
@@ -605,16 +604,7 @@ def is_obsolete(
         logger.debug("'target_datetime' does not exist")
         return True
 
-    return False
-
-    # TODO DO I need this?
-    if not pre.working_update:
-        logger.debug("'pre.working_update' does not exist")
-        return True
     pre_datetime = pre.working_update.updated_at
-    if not pre_datetime:
-        logger.debug("'pre_datetime' does not exist")
-        return True
     obs = pre_datetime > target_datetime
     if obs:
         logger.debug("'pre_datetime' > 'target_datetime'")

@@ -68,16 +68,6 @@ class Plugin(DataSource):
         return DefaultVersion(major)
 
 
-# TODO don't use
-# class ExtractColumns(BaseModifier):
-#    def _do_work(self, context: "Resources") -> None:
-#        in_file = context[self.in_rid]
-#        df = in_file.read()
-#        save_df(df.iloc[:, [2, 3, 5, 6, 9, 11, 12]], self.out_res)
-#        self.out_res.update_db()
-#        self.out_res.dirty = True
-
-
 class Spec(ETLSpec):
     class Extract:
         url = Url(_URL_VAR, latest=True)
@@ -85,7 +75,6 @@ class Spec(ETLSpec):
         add_id = True
 
         class Raw:
-            # TODO add missing columns
             tax_id = Simple()
             gene_id = Simple(terms=[t.Gene])
             symbol = Simple(terms=[t.HGNCsymbol()])
@@ -101,4 +90,4 @@ class Spec(ETLSpec):
             nomenclature_status = Simple()
             other_designations = Simple()
             modification_date = Simple()
-            feature_typ = Simple()
+            feature_type = Simple()

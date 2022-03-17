@@ -172,7 +172,6 @@ class TaskBuilder:
             harm_file = self.res_builder.file(
                 fname=harmonized_fname(core_type, etl.part_name),
                 io=tsv_io,
-                # TODO remove ID from requirement
                 desc=ResourceDesc(
                     cols=[
                         column.name
@@ -220,6 +219,7 @@ class TaskBuilder:
 
         return out_res, harm_desc2files
 
+    # TODO remove
     def harmonize_raw_data(
         self,
         in_rid: ResourceId,
@@ -371,7 +371,7 @@ class TaskBuilder:
 
         _, unpacked_files, = self.unpack(
             in_rid=rid,
-            out_fnames=(opts.out_fname,),
+            out_fnames=(opts.unpack,),
             ios=(io,),
             descs=descs,
         )

@@ -47,14 +47,13 @@ _TargetMapper = MutableMapping[str, Target]
 
 class TQDMProgressBar(Callback):
     def __init__(self, **kwargs: Any) -> None:
+        self.tqdm = None
+        self.tqdm_opts = kwargs
         super().__init__(
             start=self.__start, pretask=self.__pretask, posttask=self.__posttask
         )
-        self.tqdm = None
-        self.tqdm_opts = kwargs
 
     def __start(self, dsk: Mapping[str, Tuple[Any]]) -> None:
-        assert self.tqdm is not None
         self.tqdm = tqdm(total=len(dsk), **self.tqdm_opts, leave=False)
 
     # pylint: disable=unused-argument
@@ -233,7 +232,7 @@ class Builder:
 
     @staticmethod
     def _add_values(rule: _Rule) -> None:
-        for value in set([Builder.value_target("run"), Builder.value_target("config")]):
+        for value in {Builder.value_target("run"), Builder.value_target("config")}:
             rule.add_required_target(value)
 
     def add_plugin(
@@ -288,13 +287,7 @@ class UpdatePlugin(Task):
         for task in self.plugin.task_builder.tasks():
             for offered in task.offered:
                 if offered.rid != self.out_res.rid:
-                    try:
-                        self.required_rids.add(offered.rid)
-                    except Exception as e:
-                        for task_ in self.plugin.task_builder.tasks():
-                            print(task.tid)
-                            task_.required_rids.pprint()
-                        breakpoint()
+                    self.required_rids.add(offered.rid)
 
     def _do_work(self, context: "Resources") -> None:
         plugin = self.plugin

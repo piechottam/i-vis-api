@@ -2,6 +2,7 @@ from typing import cast
 import re
 from enum import Enum, IntFlag
 
+import pandas as pd
 from bioutils.accessions import infer_namespace
 from bioutils.sequences import aa1_to_aa3_lut
 from pandas import Series
@@ -70,15 +71,14 @@ def parse_ref(ref: str) -> str:
     return str(infer_namespace(ref))
 
 
-# TODO test
 def harmonize_aa1_to_aa3(desc: Series) -> Series:
-    desc = desc.str.extract(AA1_REGEX)
+    df: pd.DataFrame = desc.str.extract(AA1_REGEX)
 
-    na1 = ~desc[1].isna()
-    desc.loc[na1, 1] = desc.loc[na1, 1].map(aa1_to_aa3_lut)
+    na1: pd.Series = ~df[1].isna()
+    df.loc[na1, 1] = df.loc[na1, 1].map(aa1_to_aa3_lut)
 
-    na3 = ~desc[3].isna()
-    desc.loc[na3, 3] = desc.loc[na3, 3].map(aa1_to_aa3_lut)
-    desc = desc.fillna("")
+    na3: pd.Series = ~df[3].isna()
+    df.loc[na3, 3] = df.loc[na3, 3].map(aa1_to_aa3_lut)
+    df = df.fillna("")
 
-    return cast(Series, desc.agg("".join, axis=0))
+    return cast(Series, df.agg("".join, axis=1))
