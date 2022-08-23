@@ -1,25 +1,28 @@
 import re
-from typing import Any, Sequence, TYPE_CHECKING
 from functools import cached_property
+from typing import TYPE_CHECKING, Any, Sequence, Type
+
 from webargs import validate
 from webargs.fields import DelimitedList
 
-from i_vis.core.version import Default as DefaultVersion, Version
+from i_vis.core.version import Default as DefaultVersion
+from i_vis.core.version import Version
 
-from . import meta
-from .models import VariantMixin
-from .harmonizer import Harmonizer, Simple as SimpleHarmonizer
-from ..variant_utils import HGVS_LIKE_REGEX, ModifyFlag, MatchFlag
 from ... import ma
-from ...resource import ResourceIds
+from ...db_utils import CoreTypeModel
 from ...plugin import CoreType, CoreTypeField, CoreTypeMeta
+from ...resource import ResourceIds
 from ...task.transform import Transform
+from ..variant_utils import HGVS_LIKE_REGEX, MatchFlag, ModifyFlag
+from . import meta
+from .harmonizer import Harmonizer
+from .harmonizer import Simple as SimpleHarmonizer
+from .models import VariantMixin
 
 if TYPE_CHECKING:
+    from ...resource import ResourceId, Resources
     from ...task.transform import HarmonizeRawData
     from ...terms import TermType
-    from ...resource import Resources, ResourceId
-    from ... import db
 
 
 _rids = ResourceIds()
@@ -62,7 +65,7 @@ class Plugin(CoreType):
         return DefaultVersion(major=1)
 
     def _init_tasks(self) -> None:
-        self.task_builder.add_task(RegisterVariants())
+        self.task_builder.add_task(CollectVariants())
 
     @property
     def harm_meta(self) -> "CoreTypeMeta":
@@ -102,18 +105,17 @@ class Plugin(CoreType):
         return DefaultVersion(major=1)
 
     @property
-    def model(self) -> "db.Model":
+    def model(self) -> Type[CoreTypeModel]:
         raise NotImplementedError
 
     def register_harmonize_raw_data_task(self, task: "HarmonizeRawData") -> None:
-        for file in task.harm_files.values():
-            add_rid(file.rid)
+        add_rid(task.harm_file.rid)
 
 
-class RegisterVariants(Transform):
+class CollectVariants(Transform):
     def __init__(self, pname: str = meta.name, **kwargs: Any) -> None:
         super().__init__(pname=pname, offers=[], requires=[], **kwargs)
 
     def _do_work(self, context: "Resources") -> None:
-        # FIXME
+        # TODO go through all files merged and create super file
         pass

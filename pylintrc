@@ -1,7 +1,7 @@
 [MASTER]
 ignore-patterns=test_.*\.py
 jobs=10
-load-plugins=pylint_flask_sqlalchemy,pylint_flask
+load-plugins=pylint_flask
 
 [BASIC]
 good-names=db,df,dt,fk,fs,e,on,rv,i,p,q,pk,T,r,s,v,pb,it,n,to,id,io
@@ -12,7 +12,7 @@ notes=FIXME,XXX
 [TYPECHECK]
 ignored-modules=flask_marshmallow
 disable=line-too-long,unsubscriptable-object,too-few-public-methods,import-outside-toplevel,missing-function-docstring,missing-class-docstring,missing-module-docstring,duplicate-code
-generated-members=db.session.add|db.session.commit|db.session.delete|db.session.merge|db.session.query|db.session.flush|db.session.execute|pytest.lazy_fixture
+generated-members=pytest.lazy_fixture,session.query,session.add,session.commit,session.delete,session.execute,session.get,session.flush
 extension-pkg-whitelist=lxml,orjson
 
 [DESIGN]

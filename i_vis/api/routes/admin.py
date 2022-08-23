@@ -5,7 +5,7 @@ from typing import Any, Mapping
 from flask import abort, jsonify, Blueprint
 
 
-from .. import db
+from .. import session
 from ..models import Request as RequestModel, User, TableUpdate
 
 
@@ -22,19 +22,19 @@ def list_tables() -> Any:
             "updated_at": table.updated_at,
         }
 
-    tables = [helper(table) for table in db.session.query(TableUpdate).all()]
+    tables = [helper(table) for table in session.query(TableUpdate).all()]
     return jsonify(tables)
 
 
 @bp.route("/request", methods=["GET"])
 def list_requests() -> Any:
-    requests = db.session.query(RequestModel).all()
+    requests = session.query(RequestModel).all()
     return jsonify(request.in_rid for request in requests)
 
 
 @bp.route("/request/<int:request_id>", methods=["GET"])
 def request_info(request_id: int) -> Any:
-    request_data = db.session.query(RequestModel).filter_by(id=request_id).first()
+    request_data = session.query(RequestModel).filter_by(id=request_id).first()
     if request_data is None:
         return abort(404)
 

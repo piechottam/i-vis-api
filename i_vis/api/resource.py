@@ -1,39 +1,37 @@
 import os
-from typing import (
-    Any,
-    cast,
-    Iterable,
-    Iterator,
-    Generic,
-    Sequence,
-    MutableMapping,
-    Optional,
-    TYPE_CHECKING,
-    TypeVar,
-    Tuple,
-    Type,
-    Union,
-)
 from abc import ABC
 from builtins import staticmethod
 from itertools import chain
 from logging import getLogger
-from flask_sqlalchemy import DefaultMeta
-from sqlalchemy.util import classproperty
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Generic,
+    Iterable,
+    Iterator,
+    MutableMapping,
+    Optional,
+    Sequence,
+    Tuple,
+    Type,
+    TypeVar,
+    Union,
+    cast,
+)
 
 import pandas as pd
-
+from sqlalchemy import inspect
 from tabulate import tabulate
 from tqdm import tqdm
 
-from . import db
+from . import Base, engine
 
 if TYPE_CHECKING:
-    from .plugin import BasePlugin
-    from .df_utils import DataFrameIO, AnyDataFrame
-    from .db_utils import RawData, HarmonizedData
+    from .db_utils import ResDescMixin
+    from .df_utils import AnyDataFrame, DataFrameIO
     from .models import ResourceUpdate
-    from .utils import I_VIS_Logger
+    from .plugin import BasePlugin
+    from .utils import ivis_logger
 
 
 ResourceType = str
@@ -138,16 +136,11 @@ class ResourceBuilder:
 
     def table_from_model(
         self,
-        model: Union[Type["RawData"], Type["HarmonizedData"]],
+        model: Type["ResDescMixin"],
         io: Optional["DataFrameIO"] = None,
     ) -> "Table":
-        try:
-            pname = model.get_etl().pname
-            assert pname == self.pname
-        except AttributeError:
-            pass
         return self.table(
-            tname=model.__tablename__,
+            tname=inspect(model).local_table.name,
             io=io,
             desc=model.get_res_desc(),
         )
@@ -262,7 +255,7 @@ class ResourceDesc:
         )
 
     @staticmethod
-    def from_model(model: DefaultMeta) -> "ResourceDesc":
+    def from_model(model: "Base") -> "ResourceDesc":
         return ResourceDesc(
             cols=[column.name for column in getattr(model, "__table__").c],
         )
@@ -283,7 +276,7 @@ class Resource(ABC):
             if not value:
                 raise ValueError(f"'{key}' must have a value")
 
-        self.rid = ResourceId(self.type, pname, name)
+        self.rid = ResourceId(self.get_type(), pname, name)
         self.io = io
         self.desc = desc
 
@@ -320,14 +313,13 @@ class Resource(ABC):
     def exists(self) -> bool:
         raise NotImplementedError(str(self.rid))
 
-    # pylint: disable=no-self-argument,no-member
-    @classproperty
-    def type(cls) -> ResourceType:
-        return ResourceType(cls.__name__)  # type: ignore
+    @classmethod
+    def get_type(cls) -> ResourceType:
+        return ResourceType(cls.__name__)
 
     @classmethod
     def link(cls, pname: str, name: str) -> ResourceId:
-        return ResourceId(cls.type, pname, name)
+        return ResourceId(cls.get_type(), pname, name)
 
     @property
     def plugin(self) -> "BasePlugin":
@@ -341,7 +333,7 @@ class Resource(ABC):
         if plugin_update is None:
             raise MissingPluginUpdateError(self.plugin.name)
 
-        return plugin_update.resource_updates_by_type(self.type).get(self.name)
+        return plugin_update.resource_updates_by_type(self.get_type()).get(self.name)
 
     @property
     def consistent(self) -> bool:
@@ -350,7 +342,7 @@ class Resource(ABC):
     @property
     def inconsistent(self) -> bool:
         self.plugin.logger.info(
-            f"Checking Consistency of {self.type}: '{self.name}'..."
+            f"Checking Consistency of {self.get_type()}: '{self.name}'..."
         )
         return (
             not self.exists()
@@ -452,22 +444,19 @@ class Table(Resource):
             from .df_utils import PandasDataFrameIO
 
             opts: MutableMapping[str, Any] = {}
-            opts.setdefault("con", db.engine)
+            opts.setdefault("con", engine)
             io = PandasDataFrameIO(read_callback="read_sql_table", read_opts=opts)
         super().__init__(pname=pname, name=tname, io=io, desc=desc)
 
     def exists(self) -> bool:
-        with db.engine.connect() as conn:
-            return cast(
-                bool,
-                db.engine.dialect.has_table(conn, getattr(self.model, "__tablename__")),
-            )
+        with engine.connect() as conn:
+            return engine.dialect.has_table(conn, getattr(self.model, "__tablename__"))
 
     @property
-    def model(self) -> "db.Model":
-        for mapper in db.Model.registry.mappers:
+    def model(self) -> Base:
+        for mapper in Base.registry.mappers:
             if mapper.class_.__tablename__ == self.name:
-                return mapper.class_
+                return cast(Base, mapper.class_)
 
         raise ValueError()
 
@@ -499,21 +488,21 @@ class Resources(Container[Resource]):
         return Resources([res for res in self if res.dirty])
 
     def get(self, rtype: ResourceType) -> "Resources":
-        return Resources(res for res in self if res.type == rtype)
+        return Resources(res for res in self if res.get_type() == rtype)
 
     def table(self, rid: ResourceId) -> "Table":
         res = self[rid]
-        assert res.type == Table.type  # pylint: disable=comparison-with-callable
+        assert res.get_type() == Table.get_type()
         return cast("Table", res)
 
     def file(self, rid: ResourceId) -> "File":
         res = self[rid]
-        assert res.type == File.type  # pylint: disable=comparison-with-callable
+        assert res.get_type() == File.get_type()
         return cast("File", res)
 
     def parquet(self, rid: ResourceId) -> "Parquet":
         res = self[rid]
-        assert res.type == Parquet.type  # pylint: disable=comparison-with-callable
+        assert res.get_type() == Parquet.get_type()
         return cast("Parquet", res)
 
     def set_dirty(self) -> None:
@@ -573,7 +562,7 @@ class Resources(Container[Resource]):
         print(tabulate(table, headers=headers, tablefmt="plain"))
 
     def get_table(self, tname: str) -> Optional["Table"]:
-        for tbl_res in self.get(Table.type):
+        for tbl_res in self.get(Table.get_type()):
             if tbl_res.model.__tablename__ == tname:  # type: ignore
                 return cast(Table, tbl_res)
 
@@ -591,7 +580,7 @@ def merge(*resources: Resources) -> Resources:
 def is_obsolete(
     pre: Resource,
     target: Resource,
-    logger: Optional["I_VIS_Logger"] = None,
+    logger: Optional["ivis_logger"] = None,
 ) -> bool:
     if logger is None:
         logger = getLogger()
@@ -604,8 +593,10 @@ def is_obsolete(
         logger.debug("'target_datetime' does not exist")
         return True
 
+    assert pre.working_update is not None
     pre_datetime = pre.working_update.updated_at
+    assert pre_datetime is not None
     obs = pre_datetime > target_datetime
     if obs:
         logger.debug("'pre_datetime' > 'target_datetime'")
-    return cast(bool, obs)
+    return obs

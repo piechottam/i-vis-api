@@ -1,17 +1,15 @@
-from typing import Sequence, TYPE_CHECKING, Any, Mapping
+from typing import Any, Mapping, Sequence
 
-from sqlalchemy.orm import declared_attr, declarative_mixin, Mapped
 from marshmallow_sqlalchemy import SQLAlchemyAutoSchema
+from sqlalchemy import VARBINARY, Column, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy.orm import Mapped, declarative_mixin, declared_attr, relationship
 
-from . import meta
-from ..utils import get_links
-from ... import db, ma
-from ...db_utils import ResDescMixin, CoreTypeMixin
+from ... import Base, ma
+from ...db_utils import CoreTypeModel, ResDescMixin
 from ...fields import StrDictMethod
 from ...resource import ResourceDesc
-
-if TYPE_CHECKING:
-    pass
+from ..utils import get_links
+from . import meta
 
 CHEMBL_MAX_LENGTH = 13
 CHEMBL_ID = "chembl_id"
@@ -19,24 +17,26 @@ DRUG_NAME_MAX_LENGTH = 255
 CHEMBL_PREFIX = "CHEMBL"
 
 
-class Drug(db.Model, CoreTypeMixin, ResDescMixin):
+class Drug(CoreTypeModel):
     __tablename__ = "drugs"
-    __table_args__ = (db.UniqueConstraint(CHEMBL_ID),)
+    __table_args__ = (UniqueConstraint(CHEMBL_ID),)
 
-    chembl_id = db.Column(db.VARBINARY(CHEMBL_MAX_LENGTH), nullable=False, index=True)
-    names: Mapped[Sequence["DrugName"]] = db.relationship(
+    chembl_id: Mapped[str] = Column(
+        String(CHEMBL_MAX_LENGTH), nullable=False, index=True
+    )
+    names: Mapped[Sequence["DrugName"]] = relationship(
         "DrugName", back_populates="drug"
     )
 
 
 @declarative_mixin
-class DrugMixin:
+class DrugMixin(ResDescMixin):
     chembl_id_nullable = True
 
     @declared_attr
     def chembl_id(self) -> Mapped[str]:
-        return db.Column(
-            db.ForeignKey(Drug.chembl_id),
+        return Column(
+            ForeignKey(Drug.chembl_id),
             nullable=self.chembl_id_nullable,
             name=CHEMBL_ID,
             index=True,
@@ -44,17 +44,17 @@ class DrugMixin:
 
     @declared_attr
     def drug(self) -> Mapped[Drug]:
-        return db.relationship(Drug)
+        return relationship(Drug)
 
 
-class DrugName(db.Model, DrugMixin, ResDescMixin):
+class DrugName(Base, DrugMixin):
     __tablename__ = "drug_names"
-    __table_args__ = (db.UniqueConstraint(CHEMBL_ID, "name"),)
+    __table_args__ = (UniqueConstraint(CHEMBL_ID, "name"),)
     chembl_id_nullable = False
 
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.VARBINARY(DRUG_NAME_MAX_LENGTH), nullable=False)
-    data_sources = db.Column(db.String(255), nullable=False)
+    id = Column(Integer, primary_key=True)
+    name = Column(VARBINARY(DRUG_NAME_MAX_LENGTH), nullable=False)
+    data_sources = Column(String(255), nullable=False)
 
 
 drug_name_res_desc = ResourceDesc([CHEMBL_ID, "name", "data_sources"])

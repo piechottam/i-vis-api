@@ -59,41 +59,30 @@ The implicit dependency structure that comes from the tasks defined under *task*
 following Makefile where the recipe part has been omitted:
 """
 
-from typing import (
-    cast,
-    Optional,
-    Sequence,
-    MutableSet,
-    TYPE_CHECKING,
-    Any,
-    Tuple,
-)
+import sys
 from datetime import datetime, timedelta
 from enum import Enum
-from logging import getLogger, LoggerAdapter
 from functools import cache, cached_property
-
+from logging import LoggerAdapter, getLogger
 from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any, MutableSet, Optional, Sequence, Tuple, cast
 
-from flask import current_app, Flask
-from flask.config import Config
-from dask.distributed import get_client, get_worker
-
-from i_vis.core.utils import EnumMixin
 from i_vis.core.config import variable_name
+from i_vis.core.utils import EnumMixin
 
+from .. import session
+from ..config_utils import get_config
 from ..resource import (
-    is_obsolete,
+    File,
+    MissingResourceError,
+    Parquet,
     Resource,
     ResourceId,
     ResourceIds,
     Resources,
-    MissingResourceError,
-    File,
-    Parquet,
     Table,
+    is_obsolete,
 )
-from ..config_utils import get_config
 
 if TYPE_CHECKING:
     from ..plugin import BasePlugin
@@ -164,8 +153,6 @@ class Task:
 
     # unique tid for tasks
     _task_ids: MutableSet[TaskId] = set()
-    # dask + flask workaround
-    _app: Optional[Flask] = None
 
     @classmethod
     def _register(cls, tid: TaskId, _register: bool) -> TaskId:
@@ -219,7 +206,6 @@ class Task:
         self._time = SimpleNamespace(started=0.0, finished=-1.0)
 
         self.logger = LoggerAdapter(getLogger("i_vis.api"), {"detail": self.tid})
-        self._config = current_app.config
 
     def valid(self) -> None:
         pass
@@ -256,46 +242,18 @@ class Task:
         raise NotImplementedError(self.tid)
 
     @staticmethod
-    def _variables(*args: Any) -> Tuple["Resources", "Run", "Config"]:
+    def _variables(*args: Any) -> Tuple["Resources", "Run"]:
         context = Resources()
         run = Run.PRETEND
-        config: "Config" = Config("")
         if args:
             for arg in args:
-                if isinstance(arg, Config):
-                    config = arg
-                elif isinstance(arg, Resources):
+                if isinstance(arg, Resources):
                     context.update_all(arg)
                 elif isinstance(arg, Run):
                     run = arg
                 else:
                     print(f"Unknown arg: {type(arg)}")
-        return context, run, config
-
-    @staticmethod
-    def _restore_app(config: "Config") -> None:
-        if Task._app:
-            return
-
-        from .. import db
-
-        if Task._app:
-            return
-
-        Task._app = Flask(__name__)
-        Task._app.config.from_mapping(config)
-        db.init_app(Task._app)
-
-        with Task._app.app_context():
-            from ..plugin import BasePlugin, CoreType, DataSource
-
-            # register core and plugins - order important!
-            CoreType.import_plugins()
-            DataSource.import_plugins()
-
-            # register tasks
-            for plugin in BasePlugin.instances():
-                plugin.register_tasks()
+        return context, run
 
     def _evaluate(self, run: Run, context: Resources) -> None:
         if run in [Run.FORCE, Run.UNCONDITIONAL] or self.requires_work(context):
@@ -307,43 +265,26 @@ class Task:
                     offered.dirty = True
             self._finish()
 
-    @property
-    def running_dask(self) -> bool:
-        # check if we are running in distributed mode
-        try:
-            _ = get_client()
-            _ = get_worker()
-            return True
-        except ValueError:
-            return False
-
     def __call__(self, *args: Any, **kwargs: Any) -> Resources:
         # lock resources
         self._resources.required_rids.close()
 
-        context, run, config = self._variables(*args)
+        context, run = self._variables(*args)
 
-        if self.running_dask:
-            self._restore_app(config)
-            app = Task._app
-            assert app is not None
-        else:
-            app = current_app
-
-        with app.app_context():
-            try:
-                self._evaluate(run, context)
-            except MissingResourceError as e:
-                self.set_error(e)
-                self.logger.exception(e)
-            except Exception as general_e:  # pylint: disable=broad-except
-                self.set_error(general_e)
-                self.logger.error("Unrecoverable error - ETL stopped")
-            finally:
-                from .. import db
-
-                db.session.flush()
-                SystemExit()
+        try:
+            self._evaluate(run, context)
+        except MissingResourceError as e:
+            self.set_error(e)
+            self.logger.exception(e)
+            session.flush()
+            sys.exit(1)
+        except Exception as general_e:  # pylint: disable=broad-except
+            self.set_error(general_e)
+            self.logger.error("Unrecoverable error - ETL stopped")
+            session.flush()
+            sys.exit(1)
+        finally:
+            session.flush()
 
         return Resources(self.offered)
 
@@ -416,7 +357,7 @@ class Task:
                 res = context[required_rid]
                 if res.dirty:
                     self.logger.debug(
-                        f"Rebuild because {res.type} '{res.name}' is dirty"
+                        f"Rebuild because {res.get_type()} '{res.name}' is dirty"
                     )
                     return True
             except MissingResourceError as e:

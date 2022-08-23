@@ -12,42 +12,41 @@ No complete dump of ChEMBLy^
 :credentials: none
 """
 
-from typing import TYPE_CHECKING, Optional
-
 import re
+from typing import TYPE_CHECKING, Optional
 
 import pandas as pd
 import requests
 from pandas import DataFrame
 from tqdm import tqdm
 
-from i_vis.core.version import Default as DefaultVersion
 from i_vis.core.utils import StatusCode200Error
+from i_vis.core.version import Default as DefaultVersion
 
-from . import meta, POST_MERGED_MAPPING_FNAME
 from ...config_utils import get_config
 from ...df_utils import (
-    sort_prefixed,
+    DataFrameIO,
     add_pk,
-    check_new_columns,
     check_missing_column,
+    check_new_columns,
     json_io,
     parquet_io,
+    sort_prefixed,
     tsv_io,
-    DataFrameIO,
     update_pk,
 )
 from ...etl import ETLSpec, Simple
 from ...plugin import DataSource
-from ...resource import File, Parquet, ResourceId, ResourceDesc
-from ...task.extract import Extract
+from ...resource import File, Parquet, ResourceDesc, ResourceId
+from ...task.extract import Base
 from ...task.transform import Process, Transform
 from ...terms import ChEMBLid
 from ...utils import chunker, tqdm_desc
+from . import POST_MERGED_MAPPING_FNAME, meta
 
 if TYPE_CHECKING:
-    from ...resource import Resources
     from ...df_utils import AnyDataFrame
+    from ...resource import Resources
 
 _VERSION_URL_VAR = meta.register_variable(
     name="VERSION_URL",
@@ -159,7 +158,7 @@ class Plugin(DataSource):
         self.task_builder.load_harmonized(harm_desc2files, etl=etl)
 
 
-class RetrieveDrugs(Extract):
+class RetrieveDrugs(Base):
     def __init__(self, out_file: "File") -> None:
         super().__init__(offers=[out_file])
 
@@ -189,7 +188,7 @@ class RetrieveDrugs(Extract):
         self.out_res.save(df, logger=self.logger)
 
 
-class RetrieveOther(Extract):
+class RetrieveOther(Base):
     """
     Retrieves Information for entries in ChEMBL beyond the ones that are listed as drugs
     """
@@ -393,5 +392,3 @@ class Spec(ETLSpec):
         withdrawn_country = Simple()
         withdrawn_reason = Simple()
         withdrawn_year = Simple()
-        # {'molecule_structures', 'chebi_par_id', 'polymer_flag', 'indication_class', 'atc_classifications',
-        # 'rule_of_five', 'usan_year', 'parenteral', 'applicants', 'inorganic_flag', 'usan_substem', 'chirality', 'withdrawn_year', 'helm_notation', 'molecule_properties', 'withdrawn_reason', 'development_phase', 'withdrawn_flag', 'sc_patent', 'research_codes', 'withdrawn_class', 'dosed_ingredient', 'prodrug', 'atc_code_description', 'pref_name', 'withdrawn_country', 'molecule_type', 'structure_type', 'black_box_warning', 'first_approval', 'biotherapeutic', 'availability_type', 'first_in_class', 'usan_stem_substem', 'black_box', 'natural_product', 'molecule_synonyms', 'topical', 'ob_patent', 'cross_references', 'drug_type', 'atc_classification', 'max_phase', 'usan_stem_definition', 'therapeutic_flag', 'molecule_hierarchy', 'molecule_chembl_id', 'synonyms', 'oral', 'usan_stem'

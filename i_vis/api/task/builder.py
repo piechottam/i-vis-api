@@ -1,40 +1,44 @@
 from typing import (
-    cast,
-    Any,
-    Tuple,
-    Optional,
-    Sequence,
     TYPE_CHECKING,
+    Any,
     Mapping,
     MutableMapping,
     MutableSequence,
+    Optional,
+    Sequence,
     Set,
+    Tuple,
+    cast,
 )
+
+from sqlalchemy import inspect
 
 from i_vis.core.file_utils import url2fname
 
+from ..df_utils import DataFrameIO, ParquetIO, TsvIO, parquet_io, tsv_io
+from ..file_utils import harmonized_fname, not_harmonized_fname, unpack_files
+from ..plugin_exceptions import WrongPlugin
 from ..resource import (
-    ResourceId,
-    Resources,
-    ResourceDesc,
     File,
-    Table,
     Parquet,
     Resource,
+    ResourceBuilder,
+    ResourceDesc,
+    ResourceId,
+    Resources,
+    Table,
+    res_registry,
 )
-from .extract import Delayed, create_task as create_extract_task
-from .load import Load
-from .transform import Unpack, HarmonizeRawData, ConvertToParquet, MergeRawData
-from ..plugin_exceptions import WrongPlugin
-from ..df_utils import DataFrameIO, parquet_io, tsv_io, ParquetIO, TsvIO
-from ..file_utils import unpack_files, harmonized_fname, not_harmonized_fname
 from ..utils import BaseUrl
-from ..resource import res_registry, ResourceBuilder
+from .extract import Delayed
+from .extract import create_task as create_extract_task
+from .load import Load
+from .transform import ConvertToParquet, HarmonizeRawData, MergeRawData, Unpack
 
 if TYPE_CHECKING:
-    from .base import Task, TaskType
+    from ..etl import ETL, CoreTypeHarmDesc, ExtractOpts
     from ..plugin import BasePlugin, CoreType
-    from ..etl import ETL, CoreTypeHarmDesc, ColumnContainer, ExtractOpts
+    from .base import Task, TaskType
 
 
 class TaskBuilder:
@@ -65,8 +69,10 @@ class TaskBuilder:
 
         out_res, harm_desc2files = self.harmonize(rid, etl)
         if not etl.load_opts or etl.load_opts.create_table:
-            self.load_raw(out_res, etl)
-            self.load_harmonized(harm_desc2files, etl)
+            if out_res:
+                self.load_raw(out_res, etl)
+            if harm_desc2files:
+                self.load_harmonized(harm_desc2files, etl)
 
     def required_resources(self, context: Resources) -> Resources:
         """Container of required resources by this task builder and its tasks"""
@@ -164,77 +170,72 @@ class TaskBuilder:
         in_rid: ResourceId,
         etl: "ETL",
     ) -> Tuple["File", Mapping["CoreTypeHarmDesc", Tuple["File", "File"]]]:
-        harm_desc2files: MutableMapping["CoreTypeHarmDesc", Tuple["File", "File"]] = {}
-        fname = etl.raw_data_fname
+        fname = (
+            etl.raw_data_fname
+        )  # TODO what if there is no harmonization -> should work
         out_res = self.res_builder.file(fname, io=TsvIO(to_opts={"index": True}))
+        harm_desc2files: MutableMapping["CoreTypeHarmDesc", Tuple["File", "File"]] = {}
 
-        for core_type in etl.core_types:
-            harm_file = self.res_builder.file(
-                fname=harmonized_fname(core_type, etl.part_name),
-                io=tsv_io,
-                desc=ResourceDesc(
-                    cols=[
-                        column.name
-                        for column in etl.core_type2model[core_type].__table__.c
-                        if etl.core_type2model.get(core_type)
-                    ],
-                ),
-            )
-            not_harm_file = self.res_builder.file(
-                fname=not_harmonized_fname(core_type, etl.part_name),
-                io=tsv_io,
+        if len(etl.core_types) > 1:
+            out_res_ids: MutableSequence["ResourceId"] = []
+            for core_type in etl.core_types:
+                path = "_" + etl.part + "_" + core_type.short_name
+                path = Parquet.format_fname(path)
+                out_parquet = self.res_builder.parquet(path, io=parquet_io)
+                harm_file, not_harm_file, harm_task = self._harmonize(
+                    in_rid, core_type, etl, out_parquet
+                )
+                out_res_ids.append(out_parquet.rid)
+                harm_desc2files[etl.core_type2harm_desc[core_type]] = (
+                    harm_file,
+                    not_harm_file,
+                )
+            merge_task = MergeRawData(in_res_ids=out_res_ids, out_file=out_res)
+            self.add_task(merge_task)
+        elif len(etl.core_types) == 1:
+            core_type = next(iter(etl.core_types))
+            harm_file, not_harm_file, harm_task = self._harmonize(
+                in_rid, core_type, etl, out_res
             )
             harm_desc2files[etl.core_type2harm_desc[core_type]] = (
                 harm_file,
                 not_harm_file,
             )
-
-        # TODO exposed columns in raw_data
-        if etl.split_harm:
-            in_res_ids: MutableSequence["ResourceId"] = []
-            for harm_desc, files in harm_desc2files.items():
-                path = "_" + etl.part + "_" + harm_desc.core_type.short_name
-                path = Parquet.format_fname(path)
-                out_parquet = self.res_builder.parquet(path, io=parquet_io)
-                in_res_ids.append(out_parquet.rid)
-                self.harmonize_raw_data(
-                    in_rid=in_rid,
-                    harm_desc2files={
-                        harm_desc: files,
-                    },
-                    out_res=out_parquet,
-                    raw_columns=etl.all_raw_columns,
-                )
-            if not in_res_ids:
-                in_res_ids.append(in_rid)
-            task = MergeRawData(in_res_ids=in_res_ids, out_file=out_res)
-            self.add_task(task)
-        else:
-            self.harmonize_raw_data(
-                in_rid=in_rid,
-                harm_desc2files=harm_desc2files,
-                out_res=out_res,
-                raw_columns=etl.all_raw_columns,
-            )
-
         return out_res, harm_desc2files
 
-    # TODO remove
-    def harmonize_raw_data(
-        self,
-        in_rid: ResourceId,
-        harm_desc2files: Mapping["CoreTypeHarmDesc", Tuple["File", "File"]],
-        out_res: Resource,
-        raw_columns: "ColumnContainer",
-    ) -> HarmonizeRawData:
+    # TODO exposed columns in raw_data
+    def _harmonize(
+        self, in_rid: "ResourceId", core_type: "CoreType", etl: "ETL", out_res: Resource
+    ) -> Tuple[File, File, HarmonizeRawData]:
+        harm_file = self.res_builder.file(
+            fname=harmonized_fname(core_type, etl.part_name),
+            io=tsv_io,
+            desc=ResourceDesc(
+                cols=[
+                    column.name
+                    for column in inspect(etl.core_type2model[core_type]).columns
+                    if etl.core_type2model.get(core_type)
+                ],
+            ),
+        )
+        not_harm_file = self.res_builder.file(
+            fname=not_harmonized_fname(core_type, etl.part_name),
+            io=tsv_io,
+        )
         task = HarmonizeRawData(
             in_rid=in_rid,
-            harm_desc2files=harm_desc2files,
+            harm_desc=etl.core_type2harm_desc[core_type],
+            harm_file=harm_file,
+            not_harm_file=not_harm_file,
             out_res=out_res,
-            raw_columns=raw_columns,
+            raw_columns=etl.raw_columns,
         )
         self.add_task(task)
-        return task
+        return (
+            harm_file,
+            not_harm_file,
+            task,
+        )
 
     def load(
         self,
@@ -317,7 +318,7 @@ class TaskBuilder:
                 rid = self._process_unpack(opts, rid)
             else:
                 if opts.add_id:
-                    in_file = cast(File, res_registry.get(File.type)[rid])
+                    in_file = cast(File, res_registry.get(File.get_type())[rid])
                     task, out_res = self.add_id(in_file, etl, opts.add_id)
                     rid = out_res.rid
                     self.add_task(task)
@@ -357,7 +358,7 @@ class TaskBuilder:
         if opts.unpack:
             rid = self._process_unpack(opts, rid)
             if opts.add_id:
-                in_file = cast(File, res_registry.get(File.type)[rid])
+                in_file = cast(File, res_registry.get(File.get_type())[rid])
                 task, out_res = self.add_id(in_file, etl, opts.add_id)
                 rid = out_res.rid
                 self.add_task(task)
@@ -369,6 +370,7 @@ class TaskBuilder:
         if hasattr(opts, "raw_columns") and opts.raw_columns:
             descs = (ResourceDesc(opts.raw_columns.cols),)
 
+        assert opts.unpack is not None
         _, unpacked_files, = self.unpack(
             in_rid=rid,
             out_fnames=(opts.unpack,),
@@ -399,10 +401,7 @@ class TaskBuilder:
             task_opts.setdefault("io", io)
             task_opts["desc"] = desc
 
-            try:
-                transform_task = task.task(in_rid=rid, **task_opts)
-                rid = transform_task.out_res.rid
-                self.add_task(transform_task)
-            except Exception as e:
-                breakpoint()
+            transform_task = task.task(in_rid=rid, **task_opts)
+            rid = transform_task.out_res.rid
+            self.add_task(transform_task)
         return rid

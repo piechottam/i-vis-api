@@ -1,23 +1,15 @@
 from functools import cache
-from typing import (
-    Any,
-    Mapping,
-    MutableMapping,
-    TYPE_CHECKING,
-    Type,
-    Union,
-)
+from typing import TYPE_CHECKING, Any, Mapping, MutableMapping, Type, Union
+
+from flask import request
+from flask.helpers import url_for
 from inflection import underscore
 from marshmallow import EXCLUDE
-from flask.helpers import url_for
-from flask import request
 
-from i_vis.core.utils import class_name
-from i_vis.core import blueprint
-
-from i_vis.api import ma, fields
+from i_vis.api import fields, ma, terms
 from i_vis.api.plugin import CoreType, DataSource
-from i_vis.api import terms
+from i_vis.core import blueprint
+from i_vis.core.utils import class_name
 
 if TYPE_CHECKING:
     from i_vis.api.etl import ETL, RawData
@@ -191,7 +183,7 @@ class Term(ma.Schema):
 
     @staticmethod
     def get_id(data: terms.Term) -> str:
-        return data.name
+        return data.get_name()
 
     @staticmethod
     def get_type(_data: terms.Term) -> str:

@@ -10,16 +10,19 @@ clinvar
 :credentials: none
 """
 
-from pandas import DataFrame
+from typing import cast
 
-from i_vis.core.version import Date as DateVersion, recent
+from pandas import Series
 
-from . import meta
+from i_vis.core.version import Date as DateVersion
+from i_vis.core.version import recent
+
 from ... import terms as t
-from ...df_utils import TsvIO, i_vis_col
-from ...etl import Simple, ETLSpec
+from ...df_utils import TsvIO
+from ...etl import ETLSpec, Simple
 from ...plugin import DataSource
 from ...utils import VariableUrl as Url
+from . import meta
 
 _URL_PREFIX = "https://ftp.ncbi.nlm.nih.gov/pub/clinvar/tab_delimited/"
 
@@ -88,13 +91,13 @@ class GeneSummaries(ETLSpec):
             number_with_conflicts = Simple()
 
 
-def clean_hgvs(df: DataFrame, col: str) -> DataFrame:
-    df.loc[:, i_vis_col(col)] = (
-        df[col]
-        .str.replace(r"\([^)]+\):", ":", regex=True)
-        .str.replace(r"([^:]+):([^ ]+) \(([^)]+)\)", "\\1:\\2", regex=True)
+def clean_hgvs(hgvs: Series) -> Series:
+    return cast(
+        Series,
+        hgvs.str.replace(r"\([^)]+\):", ":", regex=True).str.replace(
+            r"([^:]+):([^ ]+) \(([^)]+)\)", "\\1:\\2", regex=True
+        ),
     )
-    return df
 
 
 class VariantSummary(ETLSpec):

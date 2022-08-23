@@ -1,34 +1,33 @@
 import os
-from typing import Any, Sequence, TYPE_CHECKING
 from functools import cached_property
+from typing import TYPE_CHECKING, Any, Sequence, Type
 
 from flask_marshmallow.fields import URLFor
+from i_vis.core.version import Default as DefaultVersion
+from i_vis.core.version import Version
 
-from i_vis.core.version import Default as DefaultVersion, Version
-
-from . import meta
-from ...config_utils import get_config
-from .models import (
-    Gene,
-    GeneName,
-    GeneMixin,
-    HGNC_ID,
-    HGNC_PREFIX,
-    GENE_NAME_MAX_LENGTH,
-    GENE_NAME_TYPE_MAX_LENGTH,
-)
 from ... import config_meta, ma
+from ...config_utils import get_config
 from ...df_utils import tsv_io
 from ...harmonizer import Harmonizer, SimpleHarmonizer
-from ...plugin import CoreType, CoreTypeMeta, CoreTypeField
-from ...resource import ResourceIds, ResourceId
+from ...plugin import CoreType, CoreTypeField, CoreTypeMeta
+from ...resource import ResourceId, ResourceIds
 from ...task.transform import BuildDict
+from . import meta
+from .models import (
+    GENE_NAME_MAX_LENGTH,
+    GENE_NAME_TYPE_MAX_LENGTH,
+    HGNC_ID,
+    HGNC_PREFIX,
+    Gene,
+    GeneMixin,
+    GeneName,
+)
 
 # from ...query import set_ops
 
 if TYPE_CHECKING:
     from ...terms import TermType
-    from ... import db
 
 _mapping_rids = ResourceIds()
 
@@ -154,5 +153,5 @@ class Plugin(CoreType):
         return DefaultVersion(major=1)
 
     @property
-    def model(self) -> "db.Model":
+    def model(self) -> Type[Gene]:
         return Gene

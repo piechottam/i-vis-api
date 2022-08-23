@@ -3,12 +3,14 @@ from typing import Sequence
 
 import click
 from flask.cli import AppGroup
+from sqlalchemy.sql import text
 
-from .utils import validate_plugins
+from i_vis.core.db import metadata
 
-from .. import db
+from .. import session
 from ..models import UpdateStatus
 from ..plugin import BasePlugin
+from .utils import validate_plugins
 
 logger = getLogger()
 
@@ -20,20 +22,18 @@ CONFIRM: str = "YES"
 def reset_db() -> None:
     choice = input(f"Reset database? DELETE EVERYTHING? {CONFIRM}/no ")
     if choice == CONFIRM:
-        db.session.commit()
-        db.session.execute("SET FOREIGN_KEY_CHECKS = 0;")
-        drop_tbls = "DROP TABLE IF EXISTS " + ", ".join(
-            tbl for tbl in db.metadata.tables
-        )
-        db.session.execute(drop_tbls)
-        db.session.execute("SET FOREIGN_KEY_CHECKS = 1;")
+        session.commit()
+        session.execute(text("""SET FOREIGN_KEY_CHECKS = 0;"""))
+        drop_tbls = "DROP TABLE IF EXISTS " + ", ".join(tbl for tbl in metadata.tables)
+        session.execute(text(drop_tbls))
+        session.execute(text("SET FOREIGN_KEY_CHECKS = 1;"))
 
-        result = db.session.execute("SHOW TABLES")
+        result = session.execute(text("""SHOW TABLES"""))
         tbls = ", ".join(tuple(row[0] for row in result))
         if tbls:
             msg = f"Unknown tables were NOT deleted: {tbls}"
             logger.warning(msg)
-        db.session.commit()
+        session.commit()
 
 
 @app_group.command("plugins", short_help="Reset current plugins.")
@@ -51,5 +51,5 @@ def reset_plugins(plugin: Sequence[BasePlugin]) -> None:
             p.updater.remove_tables(p.version.current)
             assert p.updater.current is not None
             p.updater.current.status = UpdateStatus.DELETED
-    db.session.commit()
-    db.create_all()
+    session.commit()
+    metadata.create_all()

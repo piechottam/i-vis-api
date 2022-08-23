@@ -1,22 +1,22 @@
-from typing import Any, cast, Optional, Sequence
+from typing import Any, Optional, Sequence, cast
 
 import pandas as pd
 from pandas import DataFrame, Series
 
-from ..variant_utils import (
-    VARIANT_LEN,
-    VARIANT_REF_LEN,
-    VARIANT_DESC_LEN,
-    HGVS_LIKE_REGEX,
-    HGVS_DESC_TYPE,
-    REF_VERSION_REGEX,
-    AAC_REGEX,
-    AA1_REGEX,
-    harmonize_aa1_to_aa3,
-    ModifyFlag,
-)
 from ...harmonizer import Harmonizer, QueryOpts
 from ...preon import QueryResult
+from ..variant_utils import (
+    AA1_REGEX,
+    AAC_REGEX,
+    HGVS_DESC_TYPE,
+    HGVS_LIKE_REGEX,
+    REF_VERSION_REGEX,
+    VARIANT_DESC_LEN,
+    VARIANT_LEN,
+    VARIANT_REF_LEN,
+    ModifyFlag,
+    harmonize_aa1_to_aa3,
+)
 
 
 # noinspection PyAbstractClass
@@ -102,6 +102,7 @@ class Simple(Harmonizer):
         opts: Optional[QueryOpts] = None,
         **kwargs: Any
     ) -> DataFrame:
+        # TODO index
         static_cols = df.columns.difference(cols).to_list()
 
         results = []
@@ -123,6 +124,7 @@ class Simple(Harmonizer):
 
                 unknown_type = self._process_unknown_type(hgvs_names)
                 if unknown_type.any():
+                    # TODO why this?
                     breakpoint()
                     unknown_desc_type.append(hgvs_names[unknown_type])
 
@@ -145,10 +147,8 @@ class Simple(Harmonizer):
             unmapped["unmapped_type"] = "not_hgvs"
             df = pd.concat([df, unmapped], ignore_index=True)
 
+        df["harmonized"] = df["unmapped_type"].neq("")
         return df
-
-    def is_harmonized(self, result: DataFrame) -> Series:
-        return cast(Series, result["unmapped_type"].eq(""))
 
     def clear(self) -> None:
         pass

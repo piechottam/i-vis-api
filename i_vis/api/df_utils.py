@@ -1,41 +1,41 @@
 """Tools for pandas data frames"""
+import math
+from abc import ABC
+from functools import partial
 from typing import (
+    TYPE_CHECKING,
     Any,
     Callable,
-    cast,
     Hashable,
     Iterable,
     Iterator,
+    Mapping,
+    MutableMapping,
+    MutableSequence,
     Optional,
     Sequence,
-    Mapping,
-    TYPE_CHECKING,
     Union,
+    cast,
 )
-from abc import ABC
-from functools import partial, cache
-import math
-from dask import dataframe as dd
-import orjson
 
 import numpy as np
+import orjson
 import pandas as pd
+from dask import dataframe as dd
 from inflection import underscore
 from tqdm import tqdm
 
-from i_vis.core.db_utils import i_vis_col
 from i_vis.core.config import get_ivis
+from i_vis.core.db_utils import i_vis_col
 
-from .utils import getLogger
+from .config_utils import CHUNKSIZE
 from .db_utils import RAW_DATA_PK
 from .resource import File, Parquet
-from .config_utils import CHUNKSIZE
-
+from .utils import get_logger
 
 if TYPE_CHECKING:
     from .resource import Resource, ResourceDesc
-    from .etl import DataFrameModifier
-    from .utils import I_VIS_Logger
+    from .utils import ivis_logger
 
 
 PD_READ_OPTS = {
@@ -48,6 +48,32 @@ PD_TO_CSV_OPTS = {
 
 
 RAW_DATA_FK = i_vis_col("raw_data_id")
+JSON_PREFIX = "i_vis_json__"
+RAW_PREFIX = "i_vis_raw__"
+MODIFIED_PREFIX = "i_vis_mod__"
+
+
+def i_vis_raw(col: str) -> str:
+    return RAW_PREFIX + col
+
+
+def i_vis_json(col: str) -> str:
+    return JSON_PREFIX + col
+
+
+def is_i_vis_json(col: str) -> bool:
+    return col.startswith(JSON_PREFIX)
+
+
+def has_i_vs_json(df: Union[pd.DataFrame, dd.DataFrame]) -> bool:
+    for col in df.columns:
+        if is_i_vis_json(col):
+            return True
+    return False
+
+
+def i_vis_mod(col: str) -> str:
+    return MODIFIED_PREFIX + col
 
 
 def clean_df(df: pd.DataFrame) -> pd.DataFrame:
@@ -70,7 +96,7 @@ class DataFrameIterable(Iterable[pd.DataFrame]):
         in_res: "Resource",
         normalize: bool,
         check: bool,
-        logger: Optional["I_VIS_Logger"] = None,
+        logger: Optional["ivis_logger"] = None,
     ) -> None:
         self.dfs = dfs
         self.in_res = in_res
@@ -110,7 +136,7 @@ class DataFrameIO(ABC):
         to_opts: Optional[Mapping[str, Any]] = None,
         normalize: Optional[bool] = True,
         check: Optional[bool] = True,
-        logger: Optional["I_VIS_Logger"] = None,
+        logger: Optional["ivis_logger"] = None,
         **kwargs: Any,
     ):
         self._read_callback = read_callback
@@ -118,7 +144,7 @@ class DataFrameIO(ABC):
         #
         self.__normalize = normalize
         self.__check = check
-        self.__logger = logger or getLogger()
+        self.__logger = logger or get_logger()
         #
         read_opts = dict(read_opts) if read_opts else {}
         to_opts = dict(to_opts) if to_opts else {}
@@ -133,7 +159,7 @@ class DataFrameIO(ABC):
         in_res: "Resource",
         normalize: Optional[bool] = None,
         check: Optional[bool] = None,
-        logger: Optional["I_VIS_Logger"] = None,
+        logger: Optional["ivis_logger"] = None,
         **kwargs: Any,
     ) -> Union[pd.DataFrame, dd.DataFrame, Iterable[pd.DataFrame]]:
         logger = self._logger(logger)
@@ -153,7 +179,7 @@ class DataFrameIO(ABC):
         in_res: "Resource",
         normalize: bool,
         check: bool,
-        logger: Optional["I_VIS_Logger"] = None,
+        logger: Optional["ivis_logger"] = None,
     ) -> "AnyDataFrame":
         if normalize:
             df = normalize_columns(df)
@@ -168,7 +194,7 @@ class DataFrameIO(ABC):
         return df
 
     def _read_df(
-        self, in_res: "Resource", logger: Optional["I_VIS_Logger"] = None, **kwargs: Any
+        self, in_res: "Resource", logger: Optional["ivis_logger"] = None, **kwargs: Any
     ) -> Union[AnyDataFrame, Iterable[pd.DataFrame]]:
         raise NotImplementedError
 
@@ -176,7 +202,7 @@ class DataFrameIO(ABC):
         self,
         out_res: "Resource",
         df: Union[pd.DataFrame, dd.DataFrame],
-        logger: Optional["I_VIS_Logger"] = None,
+        logger: Optional["ivis_logger"] = None,
         **kwargs: Any,
     ) -> None:
         self._write_df(out_res, df, logger, **kwargs)
@@ -189,7 +215,7 @@ class DataFrameIO(ABC):
         self,
         out_res: "Resource",
         df: AnyDataFrame,
-        logger: Optional["I_VIS_Logger"] = None,
+        logger: Optional["ivis_logger"] = None,
         **kwargs: Any,
     ) -> None:
         raise NotImplementedError
@@ -204,7 +230,7 @@ class DataFrameIO(ABC):
             return check
         return self.__check
 
-    def _logger(self, logger: Optional["I_VIS_Logger"]) -> Optional["I_VIS_Logger"]:
+    def _logger(self, logger: Optional["ivis_logger"]) -> Optional["ivis_logger"]:
         if logger is not None:
             return logger
         return self.__logger
@@ -227,7 +253,7 @@ class DataFrameIO(ABC):
 
 class PandasDataFrameIO(DataFrameIO):
     def _read_df(
-        self, in_res: "Resource", logger: Optional["I_VIS_Logger"] = None, **kwargs: Any
+        self, in_res: "Resource", logger: Optional["ivis_logger"] = None, **kwargs: Any
     ) -> Union[pd.DataFrame, Iterable[pd.DataFrame]]:
         read_opts = dict(self._read_opts)
         if kwargs:
@@ -250,7 +276,7 @@ class PandasDataFrameIO(DataFrameIO):
         self,
         out_res: "Resource",
         df: AnyDataFrame,
-        logger: Optional["I_VIS_Logger"] = None,
+        logger: Optional["ivis_logger"] = None,
         **kwargs: Any,
     ) -> None:
         if isinstance(df, dd.DataFrame):
@@ -270,7 +296,7 @@ class PandasDataFrameIO(DataFrameIO):
 
 class DaskDataFrameIO(DataFrameIO):
     def _read_df(
-        self, in_res: "Resource", logger: Optional["I_VIS_Logger"] = None, **kwargs: Any
+        self, in_res: "Resource", logger: Optional["ivis_logger"] = None, **kwargs: Any
     ) -> dd.DataFrame:
         read_opts = dict(self._read_opts)
         if kwargs:
@@ -285,7 +311,7 @@ class DaskDataFrameIO(DataFrameIO):
         self,
         out_res: "Resource",
         df: AnyDataFrame,
-        logger: Optional["I_VIS_Logger"] = None,
+        logger: Optional["ivis_logger"] = None,
         **kwargs: Any,
     ) -> None:
         if isinstance(df, pd.DataFrame):
@@ -322,84 +348,7 @@ class ParquetIO(DaskDataFrameIO):
         super().__init__(**kwargs)
 
 
-class FlatParquetIO(DaskDataFrameIO):
-    def __init__(self, **kwargs: Any) -> None:
-        kwargs["read_callback"] = "read_parquet"
-        kwargs["to_callback"] = "to_parquet"
-        kwargs["engine"] = "pyarrow"
-        super().__init__(**kwargs)
-
-    @cache
-    def header(
-        self, in_res: "Resource", logger: Optional["I_VIS_Logger"] = None, **kwargs: Any
-    ) -> Sequence[str]:
-        df = super()._read_df(in_res=in_res, logger=logger, **kwargs)
-        return self.deserialize(df[0, "json"].compute()[0])
-
-    @staticmethod
-    def serialize(df: pd.DataFrame) -> pd.DataFrame:
-        return orjson.dumps(df.tolist())
-
-    @staticmethod
-    def deserialize(df: dd.DataFrame, header: Sequence[str]) -> dd.DataFrame:
-        if not i_vis_col("json"):
-            return df
-
-        return df.map_partitions(FlatParquetIO._deserialize, header=header)
-
-    @staticmethod
-    def _deserialize(df: pd.DataFrame, header: Sequence[str]) -> pd.DataFrame:
-        obj = orjson.loads(df)
-        breakpoint()
-        return obj
-
-    def _read_df(
-        self, in_res: "Resource", logger: Optional["I_VIS_Logger"] = None, **kwargs: Any
-    ) -> dd.DataFrame:
-        df = super()._read_df(in_res=in_res, logger=logger, **kwargs)
-        if isinstance(df, dd.DataFrame):
-            df = df[1:, :]
-        else:
-            raise TypeError
-
-        return df
-
-    def _write_df(
-        self,
-        out_res: "Resource",
-        df: AnyDataFrame,
-        logger: Optional["I_VIS_Logger"] = None,
-        **kwargs: Any,
-    ) -> None:
-        header = df.columns.tolist()
-        if isinstance(df, dd.DataFrame):
-            # TODO
-            breakpoint()
-        elif isinstance(df, pd.DataFrame):
-            df = pd.DataFrame(
-                {
-                    i_vis_col("json"): df[df.columns].apply(self.serialize, axis=1),
-                },
-                index=df.index.copy(),
-            )
-            df = pd.concat(
-                [
-                    pd.DataFrame(
-                        {i_vis_col("json"): self.serialize(header)},
-                        index=[0],
-                    ),
-                    df,
-                ]
-            )
-        else:
-            raise TypeError
-
-        df.index.name = RAW_DATA_PK
-        super()._write_df(out_res=out_res, df=df, logger=logger, **kwargs)
-
-
 parquet_io = ParquetIO()
-flat_parquet_io = FlatParquetIO()
 tsv_io = TsvIO()
 csv_io = PandasDataFrameIO(read_callback="read_csv", to_callback="to_csv")
 json_io = PandasDataFrameIO(
@@ -524,10 +473,10 @@ def check_columns(
     cols: Sequence[str],
     name: str,
     hard: bool = False,
-    logger: Optional["I_VIS_Logger"] = None,
+    logger: Optional["ivis_logger"] = None,
 ) -> None:
     if logger is None:
-        logger = getLogger()
+        logger = get_logger()
     check_new_columns(df, cols=cols, name=name, logger=logger)
     check_missing_column(df, cols=cols, name=name, logger=logger, hard=hard)
 
@@ -537,7 +486,7 @@ def check_missing_column(
     df: AnyDataFrame,
     cols: Sequence[str],
     name: str,
-    logger: "I_VIS_Logger",
+    logger: "ivis_logger",
     hard: bool = True,
 ) -> None:
     for col in missing_columns(df, cols):
@@ -553,7 +502,7 @@ def check_new_columns(
     df: AnyDataFrame,
     cols: Sequence[str],
     name: str,
-    logger: "I_VIS_Logger",
+    logger: "ivis_logger",
 ) -> None:
     new_cols = new_columns(df, cols)
     if new_cols:
@@ -580,11 +529,11 @@ def sort_prefixed(df: pd.DataFrame, col: str, prefix: str) -> pd.DataFrame:
     return df.reindex(index=new_index).reset_index(drop=True)
 
 
+# pylint: disable=too-many-arguments
 def convert_to_parquet(
     in_file: "File",
     out_parquet: "Parquet",
     col: str,
-    func: Optional["DataFrameModifier"] = None,
     chunksize: Optional[int] = None,
     overwrite: bool = True,
 ) -> int:
@@ -593,13 +542,8 @@ def convert_to_parquet(
     assert in_file.io is not None
     dfs = in_file.io.read(in_file, check=True, normalize=True, chunksize=chunksize)
     for df in dfs:
-        if func:
-            df = func(df)
-            if df.empty:
-                continue
-
         df_len = len(df)
-        if not col in df.columns:
+        if col not in df.columns:
             values = pd.Series(
                 range(line_count + 1, line_count + 1 + df_len), dtype="int64", name=col
             )
@@ -619,3 +563,56 @@ def convert_to_parquet(
         out_parquet.save(df, **opts)
         line_count += df_len
     return line_count
+
+
+PREFIX = "i_vis_json_"
+
+
+def structured_cols(df: pd.DataFrame) -> Sequence[str]:
+    cols: MutableSequence[str] = []
+    for col, classes in df.applymap(type).apply(set).items():
+        for class_ in classes:
+            if issubclass(class_, (list, dict, set)):
+                cols.append(str(col))
+                break
+    return cols
+
+
+def get_meta4serialized(df: Union[pd.DataFrame, dd.DataFrame]) -> Mapping[str, Any]:
+    meta: MutableMapping[str, Any] = {}
+    for col in df.columns.tolist():
+        if col.startswith(PREFIX):
+            meta[col] = bytes
+        else:
+            meta[col] = df.dtypes[col]
+    return meta
+
+
+def get_meta4deserialized(df: Union[pd.DataFrame, dd.DataFrame]) -> Mapping[str, Any]:
+    meta: MutableMapping[str, Any] = {}
+    for col in df.columns.tolist():
+        if col.startswith(PREFIX):
+            meta[col] = object
+        else:
+            meta[col] = df.dtypes[col]
+    return meta
+
+
+def serialize(df: pd.DataFrame, cols: Optional[Sequence[str]] = None) -> pd.DataFrame:
+    if not cols:
+        cols = structured_cols(df)
+    json_cols = tuple(PREFIX + col for col in cols)
+    df.loc[:, cols] = df.loc[:, cols].applymap(orjson.dumps)
+    df.rename(columns=dict(zip(cols, json_cols)), inplace=True)
+    return df
+
+
+def deserialize(
+    df: pd.DataFrame, json_cols: Optional[Sequence[str]] = None
+) -> pd.DataFrame:
+    if not json_cols:
+        json_cols = tuple(col for col in df.columns if col.startswith(PREFIX))
+    cols = tuple(col.replace(PREFIX, "") for col in json_cols)
+    df.loc[:, json_cols] = df.loc[:, json_cols].applymap(orjson.loads)
+    df.rename(columns=dict(zip(json_cols, cols)), inplace=True)
+    return df

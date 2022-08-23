@@ -10,26 +10,27 @@ Biomarkers
 :credentials: none
 """
 
-from typing import Any, TYPE_CHECKING, Mapping, cast, Optional
 import os
-from pandas import DataFrame
+from typing import TYPE_CHECKING, Any, Mapping, Optional, cast
 
-from i_vis.core.file_utils import prefix_fname, change_suffix
+from pandas import DataFrame, Series
+
+from i_vis.core.file_utils import change_suffix, prefix_fname
 from i_vis.core.version import Date as DateVersion
 
-from . import meta
 from ... import terms as t
 from ...config_utils import get_config
-from ...df_utils import i_vis_col, tsv_io
-from ...etl import Simple, ETLSpec, Modifier, HarmonizerModifier
+from ...df_utils import tsv_io
+from ...etl import ETLSpec, HarmonizerModifier, Modifier, Simple
 from ...plugin import DataSource
+from ...resource import Parquet
 from ...task.transform import Process
 from ...utils import VariableUrl as Url
-from ...resource import Parquet
+from . import meta
 
 if TYPE_CHECKING:
-    from ...resource import ResourceId, Resources, ResourceDesc
     from ...df_utils import DataFrameIO
+    from ...resource import ResourceDesc, ResourceId, Resources
 
 _DATA_URL_VAR = meta.register_variable(
     name="URL",
@@ -119,15 +120,14 @@ class FilterUnknown(Process):
         self.out_res.save(df)
 
 
-def clean_drug(df: DataFrame, col: str) -> DataFrame:
-    df[i_vis_col(col)] = (
-        df[col].str.replace(r"[\[\]]", "", regex=True).str.split(pat=";|,")
+def clean_drug(drugs: Series) -> Series:
+    return cast(
+        Series, drugs.str.replace(r"[\[\]]", "", regex=True).str.split(pat=";|,")
     )
-    return df
 
 
-def add_hgvs_c(df: DataFrame) -> DataFrame:
-    df[i_vis_col("hgvs_c")] = df["transcript"] + ":" + df["c_dna"]
+def add_hgvs_c(df: DataFrame, col: str) -> DataFrame:
+    df[col] = df["transcript"] + ":" + df["c_dna"]
     return df
 
 

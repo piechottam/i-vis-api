@@ -1,38 +1,49 @@
-from typing import (
-    Any,
-    Mapping,
-    Sequence,
-    TYPE_CHECKING,
-)
+"""Load task
+"""
+from abc import ABC
+from typing import TYPE_CHECKING, Any, Mapping, Sequence
+
 import pandas as pd
 
+from i_vis.core.db import engine
 from i_vis.core.file_utils import lines
 
-from .base import Task, TaskType
-from .. import db
+from .. import session
 from ..db_utils import recreate_table
-from ..resource import (
-    Table,
-    ResourceId,
-    res_registry,
-)
+from ..models import TableUpdate
+from ..resource import ResourceId, Table, res_registry
+from .base import Task, TaskType
 
 if TYPE_CHECKING:
+    from sqlalchemy.engine.row import Row
+
     from ..resource import Resources
 
 
 CHUNKSIZE = 10**5
 
 
-# pylint: disable=W0223
-# noinspection PyAbstractClass
-class _Load(Task):
+class Base(Task, ABC):
+
+    # pylint: disable=abstract-method
     @property
     def type(self) -> TaskType:
         return TaskType.LOAD
 
 
-class Load(_Load):
+class LoadFailed(Exception):
+    def __init__(
+        self, task: Base, warnings: Sequence["Row"], errors: Sequence["Row"]
+    ) -> None:
+        Exception.__init__(self)
+        self.task = task
+        self.warnings = warnings
+        self.errors = errors
+
+
+class Load(Base):
+    """Load task."""
+
     TO_CSV_OPTS: Mapping[str, Any] = {
         "sep": "\t",
         "index": False,
@@ -53,16 +64,14 @@ class Load(_Load):
         self._in_rid = in_rid
 
     def post_register(self) -> None:
-        if self.out_table.desc:
+        # add referenced tables as requirements
+        if self.out_table:
+            # TODO adjust to metadata, catch cycles and distinguish ETL table and core table
             for fk in getattr(self.out_table.model, "__table__").foreign_keys:
                 ref_tname = fk.target_fullname.split(".")[0]
                 res = res_registry.get_table(ref_tname)
                 if res is not None:
-                    # why equal possible?
-                    if res.rid != self.out_table.rid:
-                        self.required_rids.add(res.rid)
-                    else:
-                        breakpoint()
+                    self.required_rids.add(res.rid)
 
     def _do_work(self, context: "Resources") -> None:
         recreate_table(self.out_table)
@@ -72,7 +81,6 @@ class Load(_Load):
         fname = file.qname
         rows = lines(fname)
         cols = pd.read_csv(fname, sep="\t", nrows=0).columns.tolist()
-        breakpoint()
         query = self._build_query(self.out_table, fname, cols)
         self._load(self.out_table, query, rows)
 
@@ -86,6 +94,11 @@ class Load(_Load):
         nullable_fields = []
         model = table.model
         for col in cols:
+            try:
+                getattr(model, col)
+            except AttributeError:
+                breakpoint()
+
             if getattr(model, col).nullable:
                 nullable_fields.append(col)
                 col = "@" + col
@@ -107,12 +120,12 @@ class Load(_Load):
         return q
 
     def _load(self, table: Table, query: str, rows: int) -> None:
-        db.session.commit()
-        db.engine.execute(f"ALTER TABLE `{table.tname}` DISABLE KEYS;")
-        db.engine.execute(query)
-        warnings = list(db.engine.execute("SHOW WARNINGS;"))
-        errors = list(db.engine.execute("SHOW ERRORS;"))
-        db.engine.execute(f"ALTER TABLE `{table.tname}` ENABLE KEYS;")
+        session.commit()
+        engine.execute(f"ALTER TABLE `{table.tname}` DISABLE KEYS;")
+        engine.execute(query)
+        warnings = list(engine.execute("SHOW WARNINGS;"))
+        errors = list(engine.execute("SHOW ERRORS;"))
+        engine.execute(f"ALTER TABLE `{table.tname}` ENABLE KEYS;")
 
         # set row count manually - we just counted it
         table.update_db(row_count=rows - 1)  # ignore header
@@ -129,14 +142,11 @@ class Load(_Load):
         # table_update.updated_at = func.now()
         # table_update.row_count = rows - 1  # ignore header
 
-        db.session.commit()
+        session.commit()
         working_update = table.working_update
-        assert working_update is not None
+        assert working_update is not None and isinstance(working_update, TableUpdate)
         if working_update.row_count == 0:
             self.logger.warning("No data was loaded to DB")
         elif not working_update.check()[0]:
             self.logger.error("Some data could not be added to the database")
-            print(f"Warnings: {warnings}")
-            print(f"Errors: {errors}")
-            breakpoint()
-            raise Exception
+            raise LoadFailed(self, warnings, errors)

@@ -1,22 +1,21 @@
-"""Database utils"""
-
 from functools import cached_property
-from typing import cast, TYPE_CHECKING, Mapping, Any, Sequence
 from logging import getLogger
-from dask import dataframe as dd
+from typing import TYPE_CHECKING, Any, Mapping, Sequence, cast
 
-from sqlalchemy.orm import declared_attr, Mapped
 import pandas as pd
+from dask import dataframe as dd
+from sqlalchemy import Column, Integer
+from sqlalchemy.orm import Mapped, declarative_mixin, declared_attr
 
 from i_vis.core.db_utils import i_vis_col
 
-from . import db
+from . import Base, engine, session
 from .resource import Parquet
 
 if TYPE_CHECKING:
     from .etl import ETL
-    from .resource import Table, ResourceDesc
     from .plugin import CoreType
+    from .resource import ResourceDesc, Table
 
 logger = getLogger()
 
@@ -55,8 +54,8 @@ def _name(*args: str, sep: str = "_") -> str:
 def recreate_table(table: "Table") -> None:
     """Reset table"""
 
-    db.session.commit()
-    with db.engine.connect() as con:
+    session.commit()
+    with engine.connect() as con:
         trans = con.begin()
         con.execute("SET FOREIGN_KEY_CHECKS = 0;")
         con.execute(f"TRUNCATE `{table.name}`")
@@ -65,8 +64,8 @@ def recreate_table(table: "Table") -> None:
 
     #
     if table.working_update is not None:
-        db.session.delete(table.working_update)
-        db.session.commit()
+        session.delete(table.working_update)
+        session.commit()
     #
     msg = f"Table {table.name} has been reset"
     logger.debug(msg)
@@ -77,32 +76,44 @@ class ResDescMixin:
     def get_res_desc(cls) -> "ResourceDesc":
         from .resource import ResourceDesc
 
-        return ResourceDesc.from_model(cast(db.Model, cls))
+        return ResourceDesc.from_model(cast(Base, cls))
 
 
+@declarative_mixin
 class CoreTypeMixin(ResDescMixin):
     """CoreType Model"""
 
-    id = db.Column(db.Integer, primary_key=True)
+    @declared_attr
+    def id(self) -> Mapped[int]:
+        return Column(Integer, primary_key=True)
 
     @property
     def related_data(self) -> pd.DataFrame:
-        breakpoint()
+        """TODO
+        :return:
+        """
+        # TODO return dict {data source, [id -> raw_data]}
         raise NotImplementedError
 
 
-class CoreTypeModel(db.Model, CoreTypeMixin):
+class CoreTypeModel(Base, CoreTypeMixin):
+    """Helper for type checking."""
+
     __abstract__ = True
 
 
+@declarative_mixin
 class RawDataMixin(ResDescMixin):
     """Mixin for raw data"""
 
-    i_vis_id = db.Column(db.Integer, primary_key=True)
+    @declared_attr
+    def i_vis_id(self) -> Mapped[int]:
+        return Column(Integer, primary_key=True)
 
     @classmethod
     def get_etl(cls) -> "ETL":
         """Associated ETL"""
+
         raise NotImplementedError
 
     # read header from parquet
@@ -140,14 +151,17 @@ class RawDataMixin(ResDescMixin):
 
 
 # pylint: disable=W0223
-class RawData(db.Model, RawDataMixin):
+class RawData(Base, RawDataMixin):
     __abstract__ = True
 
 
+@declarative_mixin
 class HarmonizedDataMixin(ResDescMixin):
     """Mixin for mapped data"""
 
-    id = db.Column(db.Integer, primary_key=True)
+    @declared_attr
+    def id(self) -> Mapped[int]:
+        return Column(Integer, primary_key=True)
 
     @declared_attr
     def i_vis_raw_data_id(self) -> Mapped[int]:
@@ -170,5 +184,5 @@ class HarmonizedDataMixin(ResDescMixin):
         raise NotImplementedError
 
 
-class HarmonizedData(db.Model, HarmonizedDataMixin):
+class HarmonizedData(Base, HarmonizedDataMixin):
     __abstract__ = True

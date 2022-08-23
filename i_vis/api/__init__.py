@@ -11,47 +11,53 @@ Check details at `PREDICT <https://predict.informatik.hu-berlin.de>`_
 :license: MIT, see LICENSE.txt for more details
 """
 
-from typing import Optional, Sequence, Tuple, TYPE_CHECKING
 import importlib
 import logging.config
-from logging import getLogger
 import os
-import pprint
+from logging import getLogger
+from pprint import PrettyPrinter
+from typing import TYPE_CHECKING, Any, Optional, Sequence, Tuple
 
 # noinspection PyUnresolvedReferences
 import colorlog  # pylint: disable=unused-import
-
 import yaml
 from flask import Flask, jsonify
 from flask.typing import ResponseReturnValue
 from flask_smorest import Api
 from pkg_resources import resource_filename
-from werkzeug.exceptions import HTTPException
 
-from i_vis.core.config import (
-    ConfigMeta,
-    Default as DefaultConfig,
-    MissingConfig,
-    variable_name,
+from i_vis.core.app import create as create_mini_app
+from i_vis.core.config import ConfigMeta
+from i_vis.core.config import init_app as i_vis_init_app
+from i_vis.core.config import variable_name
+
+# noinspection PyUnresolvedReferences
+from i_vis.core.db import (  # pylint: disable=unused-import
+    Base,
+    engine,
+    metadata,
+    session,
 )
 from i_vis.core.file_utils import create_dir
 from i_vis.core.login import login
-from i_vis.core.db import db
 from i_vis.core.ma import ma
 from i_vis.core.version import Default as DefaultVersion
 
 from .__version__ import __MAJOR__, __MINOR__, __PATCH__, __SUFFIX__
 
+#  from werkzeug.exceptions import HTTPException
+
+
 if TYPE_CHECKING:
     from .plugin import CoreType, DataSource
 
-# container for required and optional variables
-config_meta = ConfigMeta()
-pp = pprint.PrettyPrinter(indent=4)
+pp = PrettyPrinter(indent=4)
 
 VERSION = DefaultVersion(
     major=__MAJOR__, minor=__MINOR__, patch=__PATCH__, suffix=__SUFFIX__
 )
+
+config_meta = ConfigMeta()
 
 # Create an APISpec -> swagger and redoc
 api_spec = Api(
@@ -65,24 +71,6 @@ api_spec = Api(
         "openapi_redoc_url": "https://cdn.jsdelivr.net/npm/redoc@next/bundles/redoc.standalone.js",
     },
 )
-
-
-def _create_mini_app(config: Optional[type] = None) -> Flask:
-    app = Flask(__name__)
-    app.config.from_object(DefaultConfig)
-
-    # dispatch on provided config type
-    if config:
-        app.config.from_object(config)
-    else:
-        # load configuration
-        var_conf = variable_name("CONF")
-        if os.environ.get(var_conf):
-            app.config.from_envvar(var_conf)
-        else:
-            raise MissingConfig(f"Missing environment variable: '{var_conf}'")
-
-    return app
 
 
 def _create_default_app(config: Optional[type] = None) -> Flask:
@@ -100,18 +88,20 @@ def _create_default_app(config: Optional[type] = None) -> Flask:
         MissingConfig if :envvar:`I_VIS_CONF` and :class:`config` are not set.
     """
 
-    app = _create_mini_app(config)
+    app = create_mini_app(__name__, config)
     # OPENAPI specific
-    app.config["OPENAPI_URL_PREFIX"] = "/api"
-    app.config["OPENAPI_JSON_PATH"] = "spec.json"
-    app.config["OPENAPI_SWAGGER_UI_PATH"] = "/swagger"
-    app.config[
-        "OPENAPI_SWAGGER_UI_URL"
-    ] = "https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/3.19.5/"
-    app.config["OPENAPI_REDOC_PATH"] = "/redoc"
-    app.config[
-        "OPENAPI_REDOC_URL"
-    ] = "https://cdn.jsdelivr.net/npm/redoc@next/bundles/redoc.standalone.js"
+    app.config.setdefault("OPENAPI_URL_PREFIX", "/api")
+    app.config.setdefault("OPENAPI_JSON_PATH", "spec.json")
+    app.config.setdefault("OPENAPI_SWAGGER_UI_PATH", "/swagger")
+    app.config.setdefault(
+        "OPENAPI_SWAGGER_UI_URL",
+        "https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/3.19.5/",
+    )
+    app.config.setdefault("OPENAPI_REDOC_PATH", "/redoc")
+    app.config.setdefault(
+        "OPENAPI_REDOC_URL",
+        "https://cdn.jsdelivr.net/npm/redoc@next/bundles/redoc.standalone.js",
+    )
 
     # when NOT testing ignore warnings from other packages
     if app.config.get("TESTING", False):
@@ -134,7 +124,7 @@ def _create_default_app(config: Optional[type] = None) -> Flask:
 
     # load default (logging.yaml) or
     # custom logging(I_VIS_LOGGING_CONF) configuration
-    logging_conf = os.environ.get(
+    logging_conf = app.config.get(
         variable_name("LOGGING_CONF"), resource_filename(__name__, "logging.yaml")
     )
     with open(logging_conf, encoding="utf8") as file:
@@ -142,10 +132,16 @@ def _create_default_app(config: Optional[type] = None) -> Flask:
         logging.config.dictConfig(dict_config)
 
     # init flask plugins
-    db.init_app(app)
+    setattr(app, "session", session)
     login.init_app(app)
     ma.init_app(app)
     api_spec.init_app(app)
+    i_vis_init_app(app)
+
+    @app.teardown_appcontext
+    def remove_session(*_args: Any, **_kwargs: Any) -> None:
+        getattr(app, "session").remove()
+
     return app
 
 
@@ -158,9 +154,8 @@ def _init_plugins(
         app: class:`Flask` app object
 
     """
-    from .plugin import BasePlugin, CoreType, DataSource
-
     from . import core_types, data_sources  # pylint: disable=unused-import
+    from .plugin import BasePlugin, CoreType, DataSource
 
     # register core and plugins - order important!
     CoreType.import_plugins()
@@ -202,7 +197,7 @@ def _init_blueprints(app: Flask, core_types: Sequence["CoreType"]) -> None:
         if blp:
             api_spec.register_blueprint(blp)
 
-    from .routes.api import api_blp, list_parts, ds_bp
+    from .routes.api import api_blp, ds_bp, list_parts
 
     api_spec.register_blueprint(api_blp)
 
@@ -229,7 +224,7 @@ def create_cli_app(config: Optional[type] = None) -> Flask:
 
     with app.app_context():
         core_types, _ = _init_plugins(app)
-        db.create_all()
+        metadata.create_all(engine)
 
         from .cli import groups as cli_groups
 
@@ -293,13 +288,13 @@ def create_mock_app(config: Optional[type] = None) -> Flask:
     return app
 
 
-def handle_error(error: HTTPException) -> ResponseReturnValue:
-    if isinstance(error, HTTPException):
-        description = error.description or ["Invalid request."]
-        code = error.code
-        headers = error.get_headers()
-        return jsonify({"error": description}), code, headers
-
-    description = "Invalid request."
-    code = 503
-    return jsonify({"error": description}), code
+# def handle_error(error: HTTPException) -> ResponseReturnValue:
+#    if isinstance(error, HTTPException):
+#        description = error.description or ["Invalid request."]
+#        code = error.code
+#        headers = error.get_headers()
+#        return jsonify({"error": description}), code, headers
+#
+#    description = "Invalid request."
+#    code = 503
+#    return jsonify({"error": description}), code

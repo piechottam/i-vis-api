@@ -1,7 +1,8 @@
 import os
-from typing import Any, Optional, Sequence, TYPE_CHECKING, List, cast
+from typing import TYPE_CHECKING, Any, Mapping, Optional, Sequence, cast
+
 import pandas as pd
-from pandas import DataFrame, Series
+from pandas import DataFrame
 
 from .df_utils import normalize_columns
 from .preon import PreonModified
@@ -57,14 +58,8 @@ class Harmonizer:
     def deduplicate(self) -> bool:
         raise NotImplementedError
 
-    def is_harmonized(self, result: DataFrame) -> Series:
+    def dask_meta(self, opts: Optional[QueryOpts] = None) -> Mapping[str, Any]:
         raise NotImplementedError
-
-    def harmonized(self, result: DataFrame) -> DataFrame:
-        return result[self.is_harmonized(result)]
-
-    def not_harmonized(self, result: DataFrame) -> DataFrame:
-        return result[~self.is_harmonized(result)]
 
 
 class SimpleHarmonizer(Harmonizer):
@@ -124,25 +119,19 @@ class SimpleHarmonizer(Harmonizer):
     def deduplicate(self) -> bool:
         return True
 
-    # move to kwargs
-    # in_res: Optional["Resource"] = None,
-    # harm_desc: Optional["CoreTypeHarmDesc"] = None,
-
-    def dask_meta(self, static_cols: List[str], opts: QueryOpts) -> DataFrame:
-        return DataFrame(
-            columns=static_cols
-            + [
-                opts.prefix + self.target + "_query",
-                opts.prefix + self.target + "_found_names",
-                self.target,
-                opts.prefix + self.target + "_meta_info",
-                opts.prefix + "col",
-            ]
-        )
-
-    @staticmethod
-    def static_cols(query_df: DataFrame, query_cols: Sequence[str]) -> List[str]:
-        return cast(List[str], query_df.columns.difference(query_cols).to_list())
+    def dask_meta(
+        self,
+        opts: Optional[QueryOpts] = None,
+    ) -> Mapping[str, Any]:
+        if not opts:
+            opts = QueryOpts()
+        return {
+            opts.prefix + self.target + "_query": "str",
+            opts.prefix + self.target + "_found_names": "object",
+            self.target: "str",
+            opts.prefix + self.target + "_meta_info": "object",
+            opts.prefix + "col": "str",
+        }
 
     def harmonize(
         self,
@@ -153,15 +142,10 @@ class SimpleHarmonizer(Harmonizer):
     ) -> DataFrame:
         opts = QueryOpts()
         results = []
-        static_cols = self.static_cols(df, cols)
-        for query_col in cols:
-            df_tmp = (
-                df[static_cols + [query_col]]
-                .explode(query_col)
-                .dropna(subset=[query_col])
-            )
+        for col in cols:
+            df_tmp = df[[col]].explode(col).dropna(subset=[col])
 
-            query = df_tmp[query_col].drop_duplicates().reset_index(drop=True)
+            query = df_tmp[col].drop_duplicates().reset_index(drop=True)
             result = DataFrame.from_records(
                 query.apply(self.preon.query, **kwargs).to_list(),
                 columns=["Found Names", "Found Name IDs", "Meta Info"],
@@ -177,54 +161,24 @@ class SimpleHarmonizer(Harmonizer):
                 }
             )
             result = (
-                df_tmp.merge(
-                    result, left_on=query_col, right_on="query_name", how="left"
-                )
+                df_tmp.merge(result, left_on=col, right_on="query_name", how="left")
                 .drop(columns=["query_name"])
-                .dropna(subset=[query_col])
+                .dropna(subset=[col])
                 .explode(opts.prefix + self.target)
                 .explode(opts.prefix + self.target)
                 .reset_index(drop=True)
             )
             result = result.rename(
                 columns={
-                    query_col: opts.prefix + self.target + "_query",
+                    col: opts.prefix + self.target + "_query",
                     opts.prefix + self.target: self.target,
                 }
             )
-            result[opts.prefix + "col"] = query_col
+            result.loc[:, opts.prefix + "col"] = col
             results.append(result)
         result = pd.concat(results).reset_index(drop=True)
+        result.loc[:, "_harmonized"] = ~result[self.target].isna()
         return result
-
-    def is_harmonized(self, result: DataFrame) -> Series:
-        if self.target in result.columns:
-            return ~result[self.target].isna()
-        return Series()
-
-    def is_empty(self, result: DataFrame, opts: QueryOpts) -> Series:
-        col = opts.prefix + self.target + "_query"
-        if col in result.columns:
-            return result[col].isna()
-        return Series()
-
-    def harmonized_cols(
-        self,
-        query_df: DataFrame,
-        result: DataFrame,
-        query_cols: Sequence[str],
-        opts: QueryOpts,
-    ) -> Sequence[str]:
-        meta_cols = [col for col in result.columns if col.startswith(opts.prefix)]
-        return self.static_cols(query_df, query_cols) + [self.target] + meta_cols
-
-    def not_harmonized_cols(
-        self, query_df: DataFrame, query_cols: Sequence[str], opts: QueryOpts
-    ) -> Sequence[str]:
-        return self.static_cols(query_df, query_cols) + [
-            opts.prefix + self.target + "_query",
-            opts.prefix + "col",
-        ]
 
     def query(
         self,
@@ -235,3 +189,11 @@ class SimpleHarmonizer(Harmonizer):
             query_name,
             **kwargs,
         )
+
+
+def get_harmonized(df: pd.DataFrame, cols: Sequence[str]) -> pd.DataFrame:
+    return cast(pd.DataFrame, df.loc[df["_harmonized"], cols])
+
+
+def get_not_harmonized(df: pd.DataFrame, cols: Sequence[str]) -> pd.DataFrame:
+    return cast(pd.DataFrame, df.loc[~df["_harmonized"], cols])

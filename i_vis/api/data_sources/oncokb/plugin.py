@@ -14,13 +14,12 @@ from pandas import DataFrame
 
 from i_vis.core.version import Default as DefaultVersion
 
-from . import meta
 from ... import terms as t
-from ...df_utils import TsvIO, i_vis_col, parquet_io
-from ...etl import HarmonizerModifier, ETLSpec, Simple
+from ...df_utils import TsvIO, parquet_io
+from ...etl import ETLSpec, HarmonizerModifier, Simple
 from ...plugin import DataSource
 from ...utils import VariableUrl as Url
-
+from . import meta
 
 _URL_PREFIX = "https://oncokb.org/api/v1/utils/"
 
@@ -120,10 +119,9 @@ class Plugin(DataSource):
 #         )
 
 
-def make_hgvs_like(df: DataFrame) -> DataFrame:
+def make_hgvs_like(df: DataFrame, col: str) -> DataFrame:
     # filter "known" variants
     mask = df["alteration"].str.contains(r"^[A-Z][\d]+[A-Z]")
-    col = i_vis_col("hgvs")
     df[col] = ""
     df.loc[mask, col] = df.loc[mask, "ref_seq"] + ":" + df.loc[mask, "alteration"]
     return df

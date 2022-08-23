@@ -1,58 +1,67 @@
+from copy import copy, deepcopy
+from functools import cached_property, lru_cache
+from inspect import isclass
 from typing import (
+    TYPE_CHECKING,
     Any,
     Callable,
-    cast,
     Dict,
     ItemsView,
     Mapping,
     MutableMapping,
     MutableSequence,
     Optional,
-    Union,
     Sequence,
     Set,
-    TYPE_CHECKING,
-    Type,
     Tuple,
+    Type,
+    Union,
+    cast,
 )
-from copy import copy, deepcopy
-from enum import Enum
-from functools import cached_property, lru_cache
-from inspect import isclass
 
+import pandas as pd
 from inflection import underscore
 from marshmallow.fields import Field
 from pandas import DataFrame
-from sqlalchemy.orm import backref
+from sqlalchemy import Column, ForeignKey, Text
+from sqlalchemy.orm import backref, relationship
 
+from i_vis.core.config import get_ivis
 from i_vis.core.file_utils import url2fname
 from i_vis.core.utils import class_name
-from i_vis.core.config import get_ivis
 
-from . import db
+from . import Base, df_utils
+from .config_utils import CHUNKSIZE
 from .db_utils import (
-    get_part,
-    raw_tname,
-    harmonized_tname,
-    HarmonizedDataMixin,
-    HarmonizedData,
-    RawDataMixin,
-    RawData,
     RAW_DATA_PK,
+    HarmonizedData,
+    HarmonizedDataMixin,
+    RawData,
+    RawDataMixin,
+    get_part,
+    harmonized_tname,
+    raw_tname,
 )
+from .df_utils import RAW_DATA_FK, DataFrameIO
+from .plugin import BasePlugin, CoreType, UpdateManager
+from .resource import Parquet
 from .terms import Term, TermType, TermTypes
 from .utils import BaseUrl
-from .plugin import CoreType, BasePlugin, UpdateManager
-from .df_utils import RAW_DATA_FK, DataFrameIO
-from .resource import Parquet
-from .config_utils import CHUNKSIZE
 
 if TYPE_CHECKING:
-    from .task.base import Task
     from .resource import ResourceId
+    from .task.base import Task
 
-DataFrameModifier = Callable[[DataFrame], DataFrame]
-ColumnModifier = Union[Mapping[str, Any], Callable[[DataFrame, str], DataFrame]]
+IvisDtype = Union[str, type]
+ColumnModifier = Union[
+    Mapping[str, Any],
+    Callable[[pd.Series], pd.Series],
+    Tuple[Callable[[pd.Series], pd.Series], IvisDtype],
+]
+# DataFrameModifier = Callable[[DataFrame, Union[str, Tuple[str, ...]]], DataFrame]
+DataFrameModifier = Union[
+    Callable[[DataFrame], DataFrame], Callable[[DataFrame, str], DataFrame]
+]
 Formatter = Callable[[Any], str]
 
 
@@ -284,7 +293,6 @@ class ExtractOpts:
 # options supported by transform
 TRANSFORM_OPTS_ATTRS = (
     "task",
-    "split_harm",
     "Raw",
     "io",
 )
@@ -329,8 +337,6 @@ class TransformOpts:
 
         self.task = getattr(opts, "task", None)
 
-        self.split_harm: bool = getattr(opts, "split_harm", True)
-
         self.raw_columns = None
         if hasattr(opts, "Raw"):
             self.raw_columns = extract_columns(getattr(opts, "Raw"))
@@ -365,20 +371,21 @@ class Modifier:
         self.columns = ColumnContainer(new_columns)
 
 
-class ModifyColumns(Enum):
-    RAW = "raw"
-    HARMONIZED = "harmonized"
-
-
 class HarmonizerModifier:
     def __init__(
-        self, modifier: DataFrameModifier, **name2column: "BaseColumn"
+        self,
+        modifier: DataFrameModifier,
+        **name2column: "BaseColumn",
     ) -> None:
         self.modifier = modifier
         for name in name2column:
             if not name.startswith("i_vis_"):
-                breakpoint()
+                raise ValueError("Column name should be prefixed with 'i_vis_': ", name)
         self.columns = ColumnContainer(name2column)
+
+    @property
+    def dask_meta(self) -> Mapping[str, Any]:
+        return {col: column.dtype for col, column in self.columns.items()}
 
 
 def get_part_name(name: str) -> str:
@@ -473,13 +480,19 @@ class CoreTypeHarmDesc:
     def __init__(
         self,
         core_type: "CoreType",
-        etl: "ETL",
+        harm_modifier: Optional[HarmonizerModifier] = None,
     ) -> None:
         self.core_type = core_type
-        self._pname = core_type.name
-        self.cols = etl.core_type2columns.get(self.core_type, ColumnContainer({})).cols
-        self.harm_modifier = etl.core_type2modifier.get(core_type)
-        self.columns = etl.core_type2columns.get(self.core_type, ColumnContainer({}))
+        self.harm_modifier = harm_modifier
+
+    # TODO
+    def raw_columns(self) -> "ColumnContainer":
+        """All relevant columns for harmonization - before transformation"""
+        pass  # TODO
+
+    def harm_columns(self) -> "ColumnContainer":
+        """All relevant columns for harmonization - after transformation"""
+        pass  # TODO
 
 
 class ETL:
@@ -538,14 +551,14 @@ class ETL:
     def _updater(self) -> UpdateManager:
         return self._plugin.updater
 
-    @property
-    def split_harm(self) -> bool:
-        """Split each core type harmonization in a separate task"""
-
-        if self.transform_opts is None:
-            return True
-
-        return self.transform_opts.split_harm
+    @cached_property
+    def column_modifier_columns(self) -> "ColumnContainer":
+        name2column = {
+            df_utils.i_vis_mod(name): column.modified()
+            for name, column in self.raw_columns.items()
+            if column.modifier
+        }
+        return ColumnContainer(name2column)
 
     @cached_property
     def modifier_task_columns(self) -> "ColumnContainer":
@@ -563,7 +576,40 @@ class ETL:
     @cached_property
     def all_raw_columns(self) -> "ColumnContainer":
         """Raw columns and columns added by task modifier"""
+
         return merge_column_container(self.raw_columns, self.modifier_task_columns)
+
+    def harm_desc(self, core_type: "CoreType") -> "CoreTypeHarmDesc":
+        """Mapping entities to harmonization descriptions"""
+
+        if self.transform_opts is None:
+            harm_modified = {}
+        else:
+
+            core_type2harm_modified = self.transform_opts.core_type2harm_modifier
+
+        self.transform_opts
+
+        # extract "raw" columns that are mapped to an core type and store in container
+        core_types = self.all_raw_columns.core_types
+
+        for core_type in core_types:
+            raw_columns = self.all_raw_columns.columns(core_type)
+            name2column = {}
+            if core_type2harm_modified:
+                harm_modified = core_type2harm_modified.get(core_type)
+                if harm_modified:
+                    name2column.update(dict(harm_modified.columns.items()))
+            for name, raw_column in raw_columns.items():
+                if not raw_column.modifier:
+                    continue
+
+                name2column[df_utils.i_vis_mod(name)] = raw_column.modified()
+
+        return {
+            core_type: CoreTypeHarmDesc(core_type, raw_columns, harm_columns)
+            for core_type in self.core_types
+        }
 
     @cached_property
     def core_type2name2column(
@@ -598,27 +644,20 @@ class ETL:
             for core_type, name2column in self.core_type2name2column.items()
         }
 
-    @cached_property
-    def core_type2modifier(self) -> Mapping[CoreType, "HarmonizerModifier"]:
-        """Mapping entities to modifiers with new columns"""
-        if self.transform_opts is None:
-            return {}
+    # TODO remove
+    # @cached_property
+    # def core_type2modifier(self) -> Mapping[CoreType, "HarmonizerModifier"]:
+    #    """Mapping entities to modifiers with new columns"""
+    #    if self.transform_opts is None:
+    #        return {}
 
-        return self.transform_opts.core_type2harm_modifier
-
-    @cached_property
-    def core_type2harm_desc(self) -> Mapping["CoreType", "CoreTypeHarmDesc"]:
-        """Mapping entities to harmonization descriptions"""
-        return {
-            core_type: CoreTypeHarmDesc(core_type, self)
-            for core_type in self.core_types
-        }
+    #    return self.transform_opts.core_type2harm_modifier
 
     @cached_property
     def core_types(self) -> Set[CoreType]:
         """All contained entities"""
 
-        return set(self.core_type2columns.keys())
+        return set(self.core_type2harm_desc.keys())
 
     @cached_property
     def raw_model(self) -> Type[RawData]:
@@ -643,7 +682,7 @@ class ETL:
         # class name for mapped class
         name = class_name(self.pname, self.part_name)
         # base classes for mapped class
-        bases = [RawDataMixin, db.Model]
+        bases = [RawDataMixin, Base]
         # attributes for base class
         attrs = {
             "__tablename__": raw_tname(self.pname, self.part_name),
@@ -652,9 +691,9 @@ class ETL:
             "processed_data": property(processed_data),
         }
         for core_type in self.core_types:
-            attrs[
-                f"i_vis_raw_{core_type.blueprint_name.replace('-', '_')}"
-            ] = db.Column(db.Text)
+            attrs[f"i_vis_raw_{core_type.blueprint_name.replace('-', '_')}"] = Column(
+                Text
+            )
 
         # container for all raw columns
         column_container = merge_column_container(
@@ -684,7 +723,7 @@ class ETL:
     def harmonized_model(self, core_type: "CoreType") -> Type[HarmonizedData]:
         """CoreType specific mapped class for harmonized data"""
         # base classes for mapped class
-        bases = [HarmonizedDataMixin, db.Model]
+        bases = [HarmonizedDataMixin, Base]
         # add core type specific mixin
         if core_type in self.core_types:
             bases.append(core_type.harm_meta.db_mixin)
@@ -700,10 +739,10 @@ class ETL:
         # attributes for mapped class
         attrs: Dict["str", Any] = {
             "__tablename__": harmonized_tname(self.pname, core_type, self.part_name),
-            RAW_DATA_FK: db.Column(
-                db.ForeignKey(f"{raw_tablename}.i_vis_id"), nullable=False, index=True
+            RAW_DATA_FK: Column(
+                ForeignKey(f"{raw_tablename}.i_vis_id"), nullable=False, index=True
             ),
-            "raw_data": db.relationship(
+            "raw_data": relationship(
                 self.raw_model,
                 backref=backref(
                     f"harmonized_{core_type.blueprint_name.replace('-', '_')}",
@@ -734,25 +773,6 @@ class ETL:
         return {
             core_type: self.harmonized_model(core_type) for core_type in self.core_types
         }
-
-
-def split(df: DataFrame, col: str, **kwargs: Any) -> DataFrame:
-    """Apply pandas str.split on column in data frame"""
-
-    df[col] = df[col].str.split(**kwargs)
-    return df
-
-
-def modify(modifier: ColumnModifier, df: DataFrame, col: str) -> DataFrame:
-    """Apply modifier on column in data frame"""
-
-    if callable(modifier):
-        return modifier(df, col)
-
-    if isinstance(modifier, Mapping):
-        return split(df, col=col, **modifier)
-
-    raise TypeError
 
 
 class ColumnContainer:
@@ -787,7 +807,7 @@ class ColumnContainer:
         core_types = []
         for term in self[col].terms:
             if Term.harmonize(term):
-                core_types.append(term.core_type)
+                core_types.append(term.get_core_type())
         return core_types
 
     @cached_property
@@ -797,6 +817,10 @@ class ColumnContainer:
             for core_type in self.core_types_by_col(col):
                 core_type2cols_.setdefault(core_type, []).append(col)
         return core_type2cols_
+
+    @cached_property
+    def columns(self, core_type: "CoreType") -> "ColumnContainer":
+        return ColumnContainer({col: self._name2column.get(col) for col in self.core_type2cols.get(core_type, [])}
 
     @cached_property
     def col2targets(self) -> Mapping[str, Sequence[str]]:
@@ -833,7 +857,7 @@ def merge_column_container(*column_containers: "ColumnContainer") -> "ColumnCont
 class ExposeInfo:
     def __init__(
         self,
-        db_column: db.Column,
+        db_column: Column[Any],
         fields: Optional[Mapping[str, Type[Field]]] = None,
         table_args: Optional[Tuple[Any]] = None,
     ):
@@ -846,11 +870,15 @@ class BaseColumn:
     # pylint: disable=too-many-arguments
     def __init__(
         self,
+        dtype: Optional[IvisDtype] = None,
         terms: Optional[TermTypes] = None,
         modifier: Optional[ColumnModifier] = None,
         formatter: Optional[Formatter] = None,
         exposed_info: Optional[ExposeInfo] = None,
     ) -> None:
+        if not dtype:
+            dtype = str
+
         self._terms: MutableSequence[TermType] = []
         if terms:
             if isinstance(terms, Term):
@@ -858,13 +886,45 @@ class BaseColumn:
             else:
                 self._terms.extend(terms)
 
-        self.modifier = modifier
-        self.formatter = formatter
+        self._mod_type: Optional[IvisDtype] = dtype
+        if modifier:
+            self.modifier: Callable[[pd.Series], pd.Series]
+            if isinstance(modifier, dict):
 
+                def helper(s: pd.Series) -> pd.Series:
+                    return cast(pd.Series, s.str.split(**modifier))
+
+                self.modifier = helper
+            elif isinstance(modifier, tuple):
+                self.modifier = modifier[0]
+                self._mod_type = modifier[1]
+            elif callable(modifier):
+                self.modifier = modifier
+        else:
+            self._mod_type = None
+
+        self.formatter = formatter
         self.exposed_info = exposed_info
+        self.dtype = dtype
+
+    def modified(self) -> "BaseColumn":
+        return BaseColumn(
+            dtype=self.mod_dtype,
+            terms=list(self.terms),
+            formatter=deepcopy(self.formatter),
+            exposed_info=copy(self.exposed_info),
+        )
+
+    @property
+    def mod_dtype(self) -> Optional[IvisDtype]:
+        if not self.modifier:
+            return None
+
+        return self._mod_type
 
     def copy(self) -> "BaseColumn":
         return BaseColumn(
+            dtype=self.dtype,
             terms=list(self._terms),
             modifier=deepcopy(self.modifier),
             formatter=deepcopy(self.formatter),
@@ -875,17 +935,13 @@ class BaseColumn:
     def terms(self) -> Set[TermType]:
         return set(self._terms)
 
-    def modify(self, df: DataFrame, col: str) -> DataFrame:
-        assert self.modifier is not None
-        return modify(self.modifier, df=df, col=col)
-
     @property
     def expose(self) -> bool:
         return self.exposed_info is not None
 
     @property
     def harmonized_to(self) -> Sequence[str]:
-        return [term.core_type.name for term in self.terms if term.harmonize]
+        return [term.get_core_type().name for term in self.terms if term.harmonize]
 
 
 class Exposed(BaseColumn):
@@ -893,11 +949,13 @@ class Exposed(BaseColumn):
     def __init__(
         self,
         exposed_info: ExposeInfo,
+        dtype: Optional[IvisDtype] = None,
         terms: Optional[TermTypes] = None,
         modifier: Optional[ColumnModifier] = None,
         formatter: Optional[Formatter] = None,
     ) -> None:
         super().__init__(
+            dtype=dtype,
             terms=terms,
             modifier=modifier,
             formatter=formatter,
@@ -908,8 +966,11 @@ class Exposed(BaseColumn):
 class Simple(BaseColumn):
     def __init__(
         self,
+        dtype: Optional[IvisDtype] = None,
         terms: Optional[TermTypes] = None,
         modifier: Optional[ColumnModifier] = None,
         fomatter: Optional[Formatter] = None,
     ) -> None:
-        super().__init__(terms=terms, modifier=modifier, formatter=fomatter)
+        super().__init__(
+            dtype=dtype, terms=terms, modifier=modifier, formatter=fomatter
+        )

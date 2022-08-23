@@ -1,13 +1,15 @@
-from typing import Sequence, Any, Mapping
-from marshmallow_sqlalchemy import SQLAlchemyAutoSchema
-from sqlalchemy.orm import declared_attr, declarative_mixin, Mapped
+from typing import Any, Mapping, Sequence
 
-from . import meta
-from ..utils import get_links
-from ... import db, ma
-from ...db_utils import ResDescMixin, CoreTypeMixin
+from marshmallow_sqlalchemy import SQLAlchemyAutoSchema
+from sqlalchemy import Column, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy.orm import Mapped, declarative_mixin, declared_attr, relationship
+
+from ... import Base, ma
+from ...db_utils import CoreTypeModel, ResDescMixin
 from ...fields import StrDictMethod
 from ...resource import ResourceDesc
+from ..utils import get_links
+from . import meta
 
 HGNC_MAX_LENGTH = 12
 HGNC_ID = "hgnc_id"
@@ -16,12 +18,16 @@ GENE_NAME_TYPE_MAX_LENGTH = 100
 HGNC_PREFIX = "HGNC:"
 
 
-class Gene(db.Model, CoreTypeMixin, ResDescMixin):
+class Gene(CoreTypeModel):
     __tablename__ = "genes"
-    __table_args__ = (db.UniqueConstraint(HGNC_ID),)
+    __table_args__ = (UniqueConstraint(HGNC_ID),)
 
-    hgnc_id = db.Column(db.VARBINARY(HGNC_MAX_LENGTH), nullable=False, index=True)
-    names: Mapped[Sequence["GeneName"]] = db.relationship(
+    hgnc_id: Mapped[str] = Column(
+        String(HGNC_MAX_LENGTH),
+        nullable=False,
+        index=True,
+    )
+    names: Mapped[Sequence["GeneName"]] = relationship(
         "GeneName", back_populates="gene"
     )
 
@@ -32,8 +38,8 @@ class GeneMixin:
 
     @declared_attr
     def hgnc_id(self) -> Mapped[str]:
-        return db.Column(
-            db.ForeignKey(Gene.hgnc_id),
+        return Column(
+            ForeignKey(Gene.hgnc_id),
             nullable=self.hgnc_id_nullable,
             name=HGNC_ID,
             index=True,
@@ -41,18 +47,18 @@ class GeneMixin:
 
     @declared_attr
     def gene(self) -> Mapped[Gene]:
-        return db.relationship(Gene)
+        return relationship(Gene)
 
 
-class GeneName(db.Model, GeneMixin, ResDescMixin):
+class GeneName(Base, GeneMixin, ResDescMixin):
     __tablename__ = "gene_names"
-    __table_args__ = (db.UniqueConstraint(HGNC_ID, "name"),)
+    __table_args__ = (UniqueConstraint(HGNC_ID, "name"),)
     hgnc_id_nullable = False
 
-    id = db.Column(db.Integer, primary_key=True)
-    type = db.Column(db.String(GENE_NAME_TYPE_MAX_LENGTH), nullable=False)
-    name = db.Column(db.String(GENE_NAME_MAX_LENGTH), nullable=False)
-    data_sources = db.Column(db.String(255), nullable=False)
+    id: Mapped[int] = Column(Integer, primary_key=True)
+    type: Mapped[str] = Column(String(GENE_NAME_TYPE_MAX_LENGTH), nullable=False)
+    name: Mapped[str] = Column(String(GENE_NAME_MAX_LENGTH), nullable=False)
+    data_sources: Mapped[str] = Column(String(255), nullable=False)
 
 
 gene_name_res_desc = ResourceDesc([HGNC_ID, "name", "type", "data_sources"])

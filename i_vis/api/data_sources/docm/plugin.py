@@ -10,16 +10,16 @@ DoCM
 :credentials: none
 """
 
-from pandas import DataFrame
-
 from i_vis.core.version import Default as DefaultVersion
-from . import meta
-from ...config_utils import get_config
+
 from ... import terms as t
-from ...df_utils import tsv_io, i_vis_col
-from ...etl import Simple, ETLSpec, HarmonizerModifier
+from ...config_utils import get_config
+from ...df_utils import tsv_io
+from ...etl import ETLSpec, HarmonizerModifier, Simple
 from ...plugin import DataSource
 from ...utils import BaseUrl as Url
+from ...utils import make_hgvs_like
+from . import meta
 
 _MAJOR = meta.register_variable(
     name="MAJOR",
@@ -47,11 +47,6 @@ class Plugin(DataSource):
             major=get_config()[_MAJOR],
             minor=get_config()[_MINOR],
         )
-
-
-def make_hgvs_like(df: DataFrame) -> DataFrame:
-    df[i_vis_col("gene_aa")] = df["gene"] + ":" + df["amino_acid"]
-    return df
 
 
 def fetch_url() -> str:
@@ -82,6 +77,6 @@ class Spec(ETLSpec):
 
     class Transform:
         variant = HarmonizerModifier(
-            make_hgvs_like,
+            make_hgvs_like(ref="gene", desc="amino_acid"),
             i_vis_gene_aa=Simple(terms=[t.HGVSp()]),
         )

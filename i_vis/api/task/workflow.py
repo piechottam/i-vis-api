@@ -1,36 +1,35 @@
 """Manages ETL process  - checks requirements and starts tasks"""
 import logging
+import sys
+from functools import cached_property
 from typing import (
+    TYPE_CHECKING,
     Any,
     Dict,
     Mapping,
-    cast,
     MutableMapping,
-    MutableSet,
     MutableSequence,
+    MutableSet,
     NewType,
     Optional,
-    Set,
     Sequence,
-    Union,
+    Set,
     Tuple,
-    TYPE_CHECKING,
+    Union,
+    cast,
 )
 
-from functools import cached_property
-import sys
-from flask import current_app
-from dask.callbacks import Callback
 from dask import get as dask_single_get
+from dask.callbacks import Callback
 from dask.distributed import Client
 from tqdm import tqdm
 
 from .. import pp
 from ..config_utils import disabled_pnames
-from ..models import UpdateStatus
-from ..resource import ResourceId, Resources, File
-from .base import Task, TaskType, Run
 from ..df_utils import json_io
+from ..models import UpdateStatus
+from ..resource import File, ResourceId, Resources
+from .base import Run, Task, TaskType
 
 if TYPE_CHECKING:
     from ..plugin import BasePlugin
@@ -56,21 +55,12 @@ class TQDMProgressBar(Callback):
     def __start(self, dsk: Mapping[str, Tuple[Any]]) -> None:
         self.tqdm = tqdm(total=len(dsk), **self.tqdm_opts, leave=False)
 
-    # pylint: disable=unused-argument
-    def __pretask(self, key: str, dsk: Mapping[str, Any], state: Any) -> None:
+    def __pretask(self, key: str, *_args: Any, **_kwargs: Any) -> None:
         assert self.tqdm is not None
         self.tqdm.set_description_str(key)
 
-    # pylint: disable=unused-argument
     # pylint: disable=too-many-arguments
-    def __posttask(
-        self,
-        key: str,
-        result: Any,
-        dsk: Mapping[str, Tuple[Any]],
-        state: Any,
-        worker_id: Any,
-    ) -> None:
+    def __posttask(self, *_args: Any, **_kwargs: Any) -> None:
         assert self.tqdm is not None
         self.tqdm.update(1)
 
@@ -131,7 +121,7 @@ class Workflow:
                     f"Missing requirement: {target} requires {required_target}"
                 )
 
-    # TODO change to non-recursive
+    # TODO change method to non-recursive
     def check_cycle(
         self, target: str, path_targets: Optional[MutableSequence[str]] = None
     ) -> None:
@@ -196,9 +186,6 @@ class Builder:
             Builder.value_target("run"): _Rule(
                 Builder.value_target("run"), value=Run.PRETEND
             ),
-            Builder.value_target("config"): _Rule(
-                Builder.value_target("config"), value=current_app.config
-            ),
         }
 
     @staticmethod
@@ -232,7 +219,7 @@ class Builder:
 
     @staticmethod
     def _add_values(rule: _Rule) -> None:
-        for value in {Builder.value_target("run"), Builder.value_target("config")}:
+        for value in list({Builder.value_target("run")}):
             rule.add_required_target(value)
 
     def add_plugin(

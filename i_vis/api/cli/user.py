@@ -8,14 +8,14 @@ import click
 from flask.cli import AppGroup, with_appcontext
 from tabulate import tabulate
 
-from .. import db
-from ..utils import getLogger
+from .. import session
 from ..models import User
+from ..utils import get_logger
 from .utils import validate_unique_mail, validate_unique_username
 
 app_group = AppGroup("user", short_help="Show user(s) relevant info(s).")
 
-logger = getLogger()
+logger = get_logger()
 
 
 @app_group.command("create", short_help="Create user.")
@@ -24,10 +24,11 @@ logger = getLogger()
 @with_appcontext
 def create(user: str, mail: str) -> None:
     """Create user and personal token"""
+
     new_user = User(name=user, mail=mail)
     new_user.set_password(token_urlsafe(12))
-    db.session.add(new_user)
-    db.session.commit()
+    session.add(new_user)
+    session.commit()
     print(f"User created, uid: {new_user.id}")
 
 
@@ -57,8 +58,8 @@ def edit(uid: int, new_name: str, new_mail: str) -> None:
     print(f"name: {user.name}; mail: {user.mail}")
     if choice != "Y":
         print("Aborted")
-    db.session.add(user)
-    db.session.commit()
+    session.add(user)
+    session.commit()
     print("User updated")
 
 
@@ -71,8 +72,8 @@ def remove(uid: int) -> None:
     choice = input(f"Really remove user: {user.name}? Yn")
     if choice != "Y":
         print("Aborted")
-    db.session.delete(user)
-    db.session.commit()
+    session.delete(user)
+    session.commit()
     print("User updated")
 
 

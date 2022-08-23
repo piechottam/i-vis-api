@@ -1,56 +1,55 @@
 import gzip
 import os
 import shutil
+from abc import ABC
+from functools import cached_property, partial
 from typing import (
-    Any,
-    Tuple,
-    Dict,
-    cast,
-    Mapping,
-    MutableMapping,
-    Sequence,
-    Optional,
     TYPE_CHECKING,
+    Any,
     Callable,
-    Union,
+    Dict,
     Generator,
     Iterator,
+    Mapping,
+    MutableMapping,
+    Optional,
+    Sequence,
+    Tuple,
+    Union,
+    cast,
 )
 from zipfile import ZipFile
-from abc import ABC
-from itertools import chain
-from functools import cached_property, partial
 
 import dask
-from dask import dataframe as dd
 import pandas as pd
-import xmltodict
 import pyarrow as pa
+import xmltodict
 from cyvcf2 import VCF
+from dask import dataframe as dd
 
 from i_vis.core.config import get_ivis
 
-from .base import Task, TaskType
-from ..df_utils import (
-    sort_prefixed,
-    RAW_DATA_FK,
-    loc,
-    ParquetIO,
-    DataFrameIO,
-    convert_to_parquet,
-    clean_df,
-)
 from .. import df_utils
-from ..resource import File, Parquet
 from ..db_utils import RAW_DATA_PK
+from ..df_utils import (
+    RAW_DATA_FK,
+    DataFrameIO,
+    ParquetIO,
+    clean_df,
+    convert_to_parquet,
+    i_vis_col,
+    loc,
+    sort_prefixed,
+)
+from ..harmonizer import get_harmonized, get_not_harmonized
+from ..resource import File, Parquet, Resource
 from ..utils import to_str
-
+from .base import Task, TaskType
 
 if TYPE_CHECKING:
-    from ..resource import Resources, Resource, ResourceDesc, ResourceId, ResourceIds
-    from ..etl import ColumnContainer, CoreTypeHarmDesc
-    from ..plugin import CoreType
     from ..df_utils import AnyDataFrame
+    from ..etl import ColumnContainer, ColumnModifier, CoreTypeHarmDesc
+    from ..resource import ResourceDesc, ResourceId, ResourceIds, Resources
 
 
 # pylint: disable=W0223
@@ -104,7 +103,7 @@ class Unpack(Transform):
 
 
 class BuildDict(Transform):
-    # pylint: disable=too-many-instance-attributes
+    # pylint: disable=too-many-instance-attributes, too-many-arguments
     def __init__(
         self,
         in_rids: "ResourceIds",
@@ -158,6 +157,7 @@ class BuildDict(Transform):
             df = pd.concat([df_main, df], ignore_index=True).drop_duplicates()
             df = df.set_index(self.target_id)
             df = df[df_main.index]
+            # TODO why is this?
             breakpoint()
 
         # filter entities with id = name
@@ -187,6 +187,7 @@ class BuildDict(Transform):
         # store entities
         entities = pd.DataFrame({self.target_id: df[self.target_id].unique()})
         entities = df_utils.add_id(entities, "id")
+        entities = entities.loc[:, ["id", self.target_id]]
 
         self.logger.info(f"{len(entities)} unique {self.target_id} entities")
         self.entities.save(entities, logger=self.logger)
@@ -251,6 +252,9 @@ class Process(Transform):
 
         self._out_res = out_res
 
+    def dask_meta(self, df: dd.DataFrame) -> Mapping[str, Any]:
+        raise NotImplementedError
+
     def _do_work(self, context: "Resources") -> None:
         if self.in_rid is not None:
             in_res = context[self.in_rid]
@@ -258,7 +262,7 @@ class Process(Transform):
         else:
             df = pd.DataFrame()
         if isinstance(df, dd.DataFrame):
-            df = df.map_partitions(self._process, context=context)
+            df = df.map_partitions(self._process, context, meta=self.dask_meta(df))
         elif isinstance(df, pd.DataFrame):
             df = self._process(df, context)
         elif isinstance(df, Iterator):
@@ -277,8 +281,7 @@ class Process(Transform):
         # else:
         #    df.to_csv(self.out_res.qname, **self._save_opts)
 
-    # dask_process
-    # pd_process
+    # TODO
     def _process(self, df: "AnyDataFrame", context: "Resources") -> "AnyDataFrame":
         raise NotImplementedError(self.tid)
 
@@ -290,166 +293,181 @@ class HarmonizeRawData(Transform):
     def __init__(
         self,
         in_rid: "ResourceId",
-        harm_desc2files: Mapping["CoreTypeHarmDesc", Tuple[File, File]],
+        harm_desc: "CoreTypeHarmDesc",
+        harm_file: File,
+        not_harm_file: File,
         out_res: "Resource",
         raw_columns: "ColumnContainer",
         **kwargs: Any,
     ) -> None:
         requires = [in_rid]
         self._in_rid = in_rid
-        offers = [out_res] + list(chain.from_iterable(harm_desc2files.values()))
+        offers = [out_res, harm_file, not_harm_file]
         self._out_res = out_res
 
-        core_types = [harm_desc.core_type for harm_desc in harm_desc2files.keys()]
-        kwargs["name_args"] = (core_type.short_name for core_type in core_types)
+        core_type = harm_desc.core_type
+        kwargs["name_args"] = (core_type.short_name,)
         super().__init__(
             offers=offers,
             requires=requires,
             **kwargs,
         )
         self.raw_columns = raw_columns
-        self.harm_files = {
-            harm_desc.core_type: file
-            for harm_desc, (file, _) in harm_desc2files.items()
-        }
-        self.not_harm_files = {
-            harm_desc.core_type: file
-            for harm_desc, (_, file) in harm_desc2files.items()
-        }
-        self.harm_descs = {
-            harm_desc.core_type: harm_desc for harm_desc in harm_desc2files.keys()
-        }
+        self.harm_desc = harm_desc
+        self.harm_file = harm_file
+        self.not_harm_file = not_harm_file
+        core_type.register_harmonize_raw_data_task(self)
 
-        for core_type in core_types:
-            core_type.register_harmonize_raw_data_task(self)
-
-    # pylint: disable=too-many-locals
     def _do_work(self, context: "Resources") -> None:
-        if not self.harm_files:
-            self.logger.info("Nothing to harmonize.")
-
-        core_types = [
-            core_type for core_type in self.harm_files.keys() if core_type.installed
-        ]
-
-        in_file = context[self.in_rid]
-        df = in_file.read()
-        if isinstance(df, pd.DataFrame):
-            self._do_pandas_work(df, core_types)
-        else:
-            cores = int(get_ivis("CORES"))
-            if cores > 1:
-                with dask.config.set(
-                    {
-                        "scheduler": "processes",
-                        "num_workers": cores,
-                        "multiprocessing.context": "fork",
-                    }
-                ):
-                    self._do_dask_work(df, core_types)
-            else:
-                self._do_dask_work(df, core_types)
-
-        for core_type in core_types:
-            for files in (self.harm_files, self.not_harm_files):
-                file = files[core_type]
-                file.update_db()
-                file.dirty = True
-
-    # pylint: disable=too-many-locals
-    def _do_dask_work(self, raw_data: dd, core_types: Sequence["CoreType"]) -> None:
+        raw_data = self._read(context)
+        raw_data = self._pre_process(raw_data)
         breakpoint()
-        for core_type in core_types:
-            harmonizer = core_type.harmonizer
-            desc = self.harm_descs[core_type]
+        harmonized, not_harmonized = self._harmonize(raw_data)
+        # extract relevant columns
+        raw_data = raw_data[["i_vis_raw_" + self.harm_desc.core_type.clean_name]]
+        self._save(raw_data, harmonized, not_harmonized)
 
-            # column modifier
-            for col in self.raw_columns.core_type2cols.get(core_type, []):
-                if self.raw_columns[col].modifier:
-                    raw_data = raw_data.map_partitions(
-                        self.raw_columns[col].modify, col=col
-                    )
+    def _read(self, context: "Resources") -> dd.DataFrame:
+        in_file = context[self.in_rid]
+        raw_data = in_file.read()
+        return raw_data
 
-            # dataframe modifier
-            harm_modifier = desc.harm_modifier
-            if harm_modifier is not None:
-                raw_data = raw_data.map_partitions(harm_modifier.modifier)
+    def _pre_process(self, raw_data: dd.DataFrame) -> dd.DataFrame:
+        if df_utils.has_i_vs_json(raw_data):
+            meta = df_utils.get_meta4deserialized(raw_data)
+            raw_data = raw_data.map_partitions(df_utils.deserialize, meta=meta)
+        else:
+            meta = dict(raw_data.dtypes.items())
 
-            cols = list(desc.cols)
-            raw_data = raw_data[[RAW_DATA_PK] + cols].rename(
-                columns={RAW_DATA_PK: RAW_DATA_FK}
+        # column modifier
+        col2modifier = {
+            col: self.raw_columns[col].modifier
+            for col in self.raw_columns.core_type2cols.get(self.harm_desc.core_type, [])
+            if self.raw_columns[col].modifier
+        }
+        if col2modifier:
+            # TODO adjust meta from col2modifier
+            for col in col2modifier.keys():
+                meta[i_vis_col(col)] = self.raw_columns[col].dtype
+            raw_data = raw_data.map_partitions(
+                modify_columns,
+                col2modifier=col2modifier,
+                meta=meta,
             )
-            result = raw_data.map_partitions(harmonizer.harmonize, cols=cols)
-            harmonized = result.map_partitions(harmonizer.harmonized)
-            not_harmonized = result.map_partitions(harmonizer.not_harmonized)
-            targets = list(core_type.harm_meta.targets)
-            harmonized = harmonized[[RAW_DATA_FK] + targets]
-
-            harmonized.map_partitions(sort_by_targets, targets=targets, meta=harmonized)
-
-            objs = (
-                (harmonized, self.harm_files),
-                (not_harmonized, self.not_harm_files),
+        # dataframe modifier
+        if self.harm_desc.harm_modifier is not None:
+            meta = dict(meta)
+            meta.update(self.harm_desc.harm_modifier.dask_meta)
+            raw_data = raw_data.map_partitions(
+                self.harm_desc.harm_modifier.modifier,
+                meta=meta,
             )
-            for df_, files in objs:
-                file = files[core_type]
-                file.save(df_)
+        breakpoint()
+        # combine raw queries
+        cols = list(self.harm_desc.cols)
+        raw_data = raw_data.map_partitions(
+            assign_raw_query,
+            core_type_clean_name=self.harm_desc.core_type.clean_name,
+            cols=cols,
+            meta={"i_vis_raw_" + self.harm_desc.core_type.clean_name: "str"},
+        )
+        return raw_data
 
-    def _do_pandas_work(
-        self, raw_data: pd.DataFrame, core_types: Sequence["CoreType"]
+    def _harmonize(self, raw_data: dd.DataFrame) -> Tuple[dd.DataFrame, dd.DataFrame]:
+        cols = list(self.harm_desc.cols)
+        meta = dict(df_utils.get_meta4deserialized(raw_data[cols]))
+        meta.update(self.harm_desc.core_type.harmonizer.dask_meta())
+        query = raw_data[cols]
+        breakpoint()
+        result = query.map_partitions(
+            self.harm_desc.core_type.harmonizer.harmonize,
+            cols=cols,
+            meta=meta,
+        )
+        targets = list(self.harm_desc.core_type.harm_meta.targets)
+        harmonized = result.map_partitions(
+            get_harmonized,
+            cols=targets,
+            meta=meta,
+        )
+        not_harmonized = result.map_partitions(
+            get_not_harmonized,
+            cols=targets,
+            meta=meta,
+        )
+        # remove duplicate mappings
+        if self.harm_desc.core_type.harmonizer.deduplicate:
+            # TODO index  and subset
+            harmonized = harmonized.drop_duplicates(
+                subset=targets,
+                ignore_index=False,  # TODO
+            )
+        breakpoint()
+        return harmonized, not_harmonized
+
+    def _save(
+        self,
+        raw_data: dd.DataFrame,
+        harmonized: dd.DataFrame,
+        not_harmonized: dd.DataFrame,
     ) -> None:
-        # TODO add exposed data
-        raw_table_data = pd.DataFrame(
-            columns=["i_vis_raw_" + core_type.clean_name for core_type in core_types],
-            index=raw_data.index.copy(),
-            dtype="str",
-        ).fillna("")
-        for core_type in core_types:
-            df = raw_data.copy()
-            harmonizer = core_type.harmonizer
-            desc = self.harm_descs[core_type]
-
-            # column modifier
-            for col in self.raw_columns.core_type2cols.get(core_type, []):
-                if self.raw_columns[col].modifier:
-                    df = self.raw_columns[col].modify(df=df, col=col)
-
-            # dataframe modifier
-            harm_modifier = desc.harm_modifier
-            if harm_modifier is not None:
-                df = harm_modifier.modifier(df)
-
-            cols = list(desc.cols)
-            raw_table_data["i_vis_raw_" + core_type.clean_name] = df[cols].apply(
-                lambda x: ";".join(set(map(to_str, filter(None, x)))), axis=1
+        data2file = (
+            (raw_data, self.out_res),
+            (harmonized, self.harm_file),
+            (not_harmonized, self.not_harm_file),
+        )
+        dask_opts = {}
+        cores = int(get_ivis("CORES"))
+        if cores > 1:
+            dask_opts.update(
+                {
+                    "scheduler": "processes",
+                    "num_workers": cores,
+                }
             )
-            df.reset_index(inplace=True)
-            breakpoint()
-            df = df[[RAW_DATA_PK] + cols].rename(columns={RAW_DATA_PK: RAW_DATA_FK})
-            result = harmonizer.harmonize(df=df, cols=cols)
-            is_harmonized = harmonizer.is_harmonized(result)
-            harmonized = result[is_harmonized]
-            not_harmonized = result[~is_harmonized]
-            targets = list(core_type.harm_meta.targets)
-            harmonized = harmonized[[RAW_DATA_FK] + targets]
-            harmonized = harmonized.sort_values(
-                by=[RAW_DATA_FK] + targets, ignore_index=True
-            )
-            # remove duplicate mappings
-            if core_type.harmonizer.deduplicate:
-                harmonized = harmonized.drop_duplicates(
-                    subset=[RAW_DATA_FK] + targets,
-                    ignore_index=True,
-                )
+        with dask.config.set(**{"multiprocessing.context": "fork"}):
+            output = tuple(dask.delayed(file.save)(df) for df, file in data2file)
+            dask.compute(output, **dask_opts)
 
-            objs = (
-                (harmonized, self.harm_files),
-                (not_harmonized, self.not_harm_files),
-            )
-            for df_, files in objs:
-                file = files[core_type]
-                file.save(df_, logger=self.logger)
-        self.out_res.save(raw_table_data, logger=self.logger)
+
+def modify_columns(
+    df: pd.DataFrame, col2modifier: Mapping[str, "ColumnModifier"]
+) -> pd.DataFrame:
+    for col, modifier in col2modifier.items():
+        df = apply_modifier(df, modifier, col)
+    return df
+
+
+def split(df: pd.DataFrame, col: str, **kwargs: Any) -> pd.DataFrame:
+    """Apply pandas str.split on column in data frame"""
+
+    df.loc[:, i_vis_col(col)] = df[col].str.split(**kwargs).copy()
+    return df
+
+
+def apply_modifier(
+    df: pd.DataFrame, modifier: "ColumnModifier", col: str
+) -> pd.DataFrame:
+    """Apply modifier on column in data frame"""
+
+    if callable(modifier):
+        df[i_vis_col(col)] = modifier(df[col])
+        return df
+
+    if isinstance(modifier, Mapping):
+        df = split(df, col=col, **modifier)
+        return df
+
+    raise TypeError
+
+
+def assign_raw_query(
+    df: pd.DataFrame, core_type_clean_name: str, cols: Sequence[str]
+) -> pd.DataFrame:
+    df.loc[:, "i_vis_raw_" + core_type_clean_name] = df[cols].apply(
+        lambda x: ";".join(set(map(to_str, filter(None, x)))), axis=1
+    )
+    return df
 
 
 def sort_by_targets(df: "AnyDataFrame", targets: Sequence[str]) -> "AnyDataFrame":
@@ -489,6 +507,10 @@ class ConvertXML(BaseModifier):
             if self.add_id:
                 df = df_utils.add_pk(df)
                 df.set_index(RAW_DATA_PK, drop=True, inplace=True)
+            df = df_utils.serialize(df)
+            cols = [col for col in df.columns if not col.startswith(df_utils.PREFIX)]
+            if cols:
+                df.loc[:, cols] = df.loc[:, cols].applymap(str)
             self.out_res.save(df, logger=self.logger, **self.to_opts)
 
 

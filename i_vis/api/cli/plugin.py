@@ -14,41 +14,37 @@ from sqlalchemy import null
 from tabulate import tabulate
 from tqdm import tqdm
 
-from i_vis.core.file_utils import create_dir
 from i_vis.core.config import add_i_vis
+from i_vis.core.file_utils import create_dir
 
-from .utils import (
-    validate_plugin,
-    validate_plugins,
-    validate_plugin_version,
-    validate_run,
-)
-from .. import config_meta, db
-from ..models import (
-    Plugin as PluginModel,
-    PluginUpdate,
-    UpdateStatus,
-    PluginVersion as PluginVersion,
-)
-from ..plugin_exceptions import (
-    NewPluginVersion,
-    MissingPluginModel,
-    MissingAnyVersion,
-    LatestUrlRetrievalError,
-    MissingCurrentVersion,
-)
+from .. import config_meta, session
+from ..models import Plugin as PluginModel
+from ..models import PluginUpdate, PluginVersion, UpdateStatus
 from ..plugin import (
     BasePlugin,
     CoreType,
     DataSource,
-    register_tasks,
     post_register,
-    register_upgrade_tasks,
+    register_tasks,
     register_update_tasks,
+    register_upgrade_tasks,
 )
-from ..task.base import TaskType, Run
+from ..plugin_exceptions import (
+    LatestUrlRetrievalError,
+    MissingAnyVersion,
+    MissingCurrentVersion,
+    MissingPluginModel,
+    NewPluginVersion,
+)
+from ..task.base import Run, TaskType
 from ..task.workflow import Builder as WorkflowBuilder
 from ..utils import short_desc
+from .utils import (
+    validate_plugin,
+    validate_plugin_version,
+    validate_plugins,
+    validate_run,
+)
 
 logger = getLogger()
 
@@ -286,7 +282,7 @@ def print_versions(plugin: Sequence["BasePlugin"]) -> None:
             p.logger.warning(e.msg)
             continue
 
-        for plugin_version in db.session.query(PluginVersion).filter_by(
+        for plugin_version in session.query(PluginVersion).filter_by(
             plugin_name=p.name
         ):
             row = {}
@@ -344,12 +340,12 @@ def choose(plugin: "BasePlugin", plugin_version: PluginVersion) -> None:
         )
         return
 
-    plugin_update = db.session.query(PluginUpdate).get(plugin_version.id).first()
+    plugin_update = session.get(PluginUpdate, plugin_version.id)
     if not plugin_update:
         plugin_update = plugin.updater.model.create_update(plugin_version)
-    plugin.updater.model.pending_update_id = plugin_update.plugin_version_id
-    db.session.add(plugin.updater.model)
-    db.session.commit()
+    plugin.updater.model.pending_update_id = plugin_update.plugin_version.id
+    session.add(plugin.updater.model)
+    session.commit()
     plugin.logger.info("New version of plugin choosen")
 
 
@@ -392,7 +388,7 @@ def freeze(plugin: "BasePlugin", invert: bool) -> None:
         else:
             plugin.updater.model.frozen = True
             msg = "Plugin version frozen"
-    db.session.commit()
+    session.commit()
     print(msg)
 
 
@@ -424,7 +420,7 @@ def update(plugin: Sequence[BasePlugin]) -> None:
             _ = p.updater.model
             # check if remote latest version is locally known
             plugin_version = (
-                db.session.query(PluginVersion)
+                session.query(PluginVersion)
                 .filter_by(plugin_name=p.name, version_str=str(latest_version))
                 .first()
             )
@@ -434,15 +430,15 @@ def update(plugin: Sequence[BasePlugin]) -> None:
         except MissingPluginModel:
             # create new plugin model
             plugin_model = PluginModel(name=p.name)
-            db.session.add(plugin_model)
-            db.session.commit()
+            session.add(plugin_model)
+            session.commit()
 
         try:
             p.updater.add_latest_version(latest_version)
         except LatestUrlRetrievalError as e:
             p.logger.error(e.msg)
             return
-        db.session.commit()
+        session.commit()
         pb.update(n=1)
 
 
@@ -470,12 +466,15 @@ def _create_pending_updates(plugins: Sequence["BasePlugin"]) -> Sequence["BasePl
 
         if not plugin.updater.pending:
             plugin_version = (
-                db.session.query(PluginVersion)
+                session.query(PluginVersion)
                 .filter_by(
                     plugin_name=plugin.name,
                     version_str=str(plugin.version.local_latest),
                 )
                 .first()
+            )
+            assert plugin_version is not None and isinstance(
+                plugin_version, PluginVersion
             )
             plugin_update = plugin.updater.model.create_update(plugin_version)
 
@@ -488,15 +487,15 @@ def _create_pending_updates(plugins: Sequence["BasePlugin"]) -> Sequence["BasePl
                 msg = "Cancel upgrade to version: %s"
                 plugin.logger.info(msg, plugin.version.pending)
                 plugin.updater.pending.status = UpdateStatus.FAILED
-                db.session.commit()
+                session.commit()
 
                 plugin_version = (
-                    db.session.query(PluginVersion)
+                    session.query(PluginVersion)
                     .filter_by(
                         plugin_name=plugin.name,
                         version_str=str(plugin.version.local_latest),
                     )
-                    .first()
+                    .one()
                 )
                 plugin_update = plugin.updater.model.create_update(plugin_version)
                 msg = "Upgrade to version: %s"
@@ -513,7 +512,7 @@ def _create_pending_updates(plugins: Sequence["BasePlugin"]) -> Sequence["BasePl
         create_dir(plugin.dir.by_version(version))
         plugins_need_work.append(plugin)
 
-    db.session.commit()
+    session.commit()
     return plugins_need_work
 
 
@@ -732,17 +731,17 @@ def reset(
                 and plugin.updater.model.pending_update_id == plugin_update.id
             ):
                 plugin.updater.model.pending_update_id = null()
-                db.session.add(plugin.updater.model)
+                session.add(plugin.updater.model)
             if (
                 plugin.updater.current
                 and plugin.updater.model.current_update_id == plugin_update.id
             ):
                 plugin.updater.model.current_update_id = null()
-                db.session.add(plugin.updater.model)
-            db.session.delete(plugin_version.plugin_update)
-            db.session.commit()
-        db.session.delete(plugin_version)
-        db.session.commit()
+                session.add(plugin.updater.model)
+            session.delete(plugin_version.plugin_update)
+            session.commit()
+        session.delete(plugin_version)
+        session.commit()
     else:
         if not omit_files:
             plugin.updater.remove_files(version)
@@ -750,7 +749,7 @@ def reset(
             plugin.updater.remove_tables(version)
         if plugin_update:
             plugin_update.status = UpdateStatus.DELETED
-    db.session.commit()
+    session.commit()
 
     what = []
     if not omit_db:

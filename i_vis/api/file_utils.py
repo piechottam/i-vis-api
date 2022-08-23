@@ -1,16 +1,8 @@
-from typing import (
-    cast,
-    Optional,
-    Sequence,
-    Tuple,
-    TYPE_CHECKING,
-    Any,
-    MutableSequence,
-)
+import gzip
 import os
 import re
-import gzip
 from io import StringIO
+from typing import TYPE_CHECKING, Any, MutableSequence, Optional, Sequence, Tuple, cast
 
 import pandas as pd
 from pandas import DataFrame
@@ -21,8 +13,8 @@ from .resource import File
 
 if TYPE_CHECKING:
     from .df_utils import DataFrameIO
-    from .resource import ResourceDesc
     from .plugin import CoreType
+    from .resource import ResourceDesc
 
 
 def local_url(file: "File") -> str:

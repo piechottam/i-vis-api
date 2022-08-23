@@ -1,9 +1,9 @@
-from typing import MutableMapping, MutableSet, MutableSequence
 import time
+from typing import MutableMapping, MutableSequence, MutableSet
 
 import numpy as np
-from dask import dataframe as dd, delayed
-
+from dask import dataframe as dd
+from dask import delayed
 from pandas import DataFrame
 
 
@@ -76,6 +76,5 @@ if __name__ == "__main__":
         _df["variant_id"] = _df["raw_data_id"]
         _dfs.append(_df)
     end = time.time()
-    breakpoint()
     _df = merge_dfs(_dfs)
     print("Finished after: ", (end - start))

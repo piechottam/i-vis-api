@@ -23,7 +23,7 @@ from psutil import (
 from i_vis.core.blueprint import Blueprint, QueryWrapper, QueryPager
 from i_vis.core.login import admin_required
 
-from .. import VERSION as I_VIS_VERSION, api_spec, db
+from .. import VERSION as I_VIS_VERSION, api_spec, session
 from .. import arguments, schemas
 from ..plugin import CoreType, DataSource
 from ..query_utils import (
@@ -303,7 +303,8 @@ def _create_part_browse_view(
                     raw_model, **core_type2kwargs[variant_core_type]
                 )
             else:
-                db_query = db.session.query(raw_model)
+                db_query = session.query(raw_model)
+                # TODO
             db_query = parts_by_non_hgvs(
                 raw_model,
                 exposed2arg=exposed_args,
@@ -336,8 +337,8 @@ def _create_part_browse_view(
                         f"{data_source.name}.browse-{part}",
                         **collection_args,
                     ),
-                    "next": helper,
                 },
+                next_callback=helper,
             )
 
     return _Parts
@@ -364,7 +365,7 @@ def _create_part_show_view(
         ) -> Any:
             raw_model = etl.raw_model
             return {
-                schemas.ENVELOPE: db.session.query(raw_model).get(view_args["id"]),
+                schemas.ENVELOPE: session.query(raw_model).get(view_args["id"]),
                 "links": {
                     "self": url_for(
                         f"{data_source.name}.show-{part}",

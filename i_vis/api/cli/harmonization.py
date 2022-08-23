@@ -2,9 +2,9 @@ import click
 from flask.cli import AppGroup
 from tabulate import tabulate
 
-from .utils import validate_data_source, validate_rid
 from ..plugin import DataSource
 from ..resource import ResourceId, Table, res_registry
+from .utils import validate_data_source, validate_rid
 
 app_group = AppGroup("harm", short_help="Show harmonization relevant info(s).")
 
@@ -14,7 +14,7 @@ app_group = AppGroup("harm", short_help="Show harmonization relevant info(s).")
 def list_harmonizations(data_source: DataSource) -> None:
     table = []
     for res in data_source.task_builder.offered_resources():
-        if res.type != Table.type:  # pylint: disable=comparison-with-callable
+        if res.get_type() != Table.get_type():
             continue
 
         etl = data_source.etl_manager.part2etl[res.qname]

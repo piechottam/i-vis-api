@@ -1,65 +1,60 @@
+import os
+from abc import ABC
+from datetime import datetime
+from functools import cached_property
+from importlib import import_module
+from logging import LoggerAdapter, getLogger
+from pkgutil import iter_modules
+from types import ModuleType
 from typing import (
+    TYPE_CHECKING,
     Any,
     Callable,
-    cast,
-    Sequence,
     Mapping,
     MutableMapping,
     MutableSequence,
     Optional,
+    Sequence,
     Set,
     Tuple,
-    TYPE_CHECKING,
     Type,
     Union,
+    cast,
 )
-import os
-from functools import cached_property
-from importlib import import_module
-from pkgutil import iter_modules
-from abc import ABC
-from logging import getLogger, LoggerAdapter
-from datetime import datetime
-from types import ModuleType
-from sqlalchemy.orm.decl_api import declared_attr
+
 from marshmallow.base import FieldABC
+from sqlalchemy.orm.decl_api import declared_attr
 
 from i_vis.core.config import MissingVariable, get_ivis
+from i_vis.core.db import engine
 from i_vis.core.file_utils import clean_fname
-from i_vis.core.version import (
-    Unknown as UnknownVersion,
-    Version,
-    UnknownVersionError,
-)
+from i_vis.core.version import Unknown as UnknownVersion
+from i_vis.core.version import UnknownVersionError, Version
 
-from . import ma
-from .config_utils import disabled_pnames, disable_pname
-from .models import (
-    Plugin as PluginModel,
-    PluginVersion,
-    PluginUpdate,
-    UpdateStatus,
-)
+from . import ma, session
+from .config_utils import disable_pname, disabled_pnames
+from .models import Plugin as PluginModel
+from .models import PluginUpdate, PluginVersion, UpdateStatus
 from .plugin_exceptions import (
-    MissingPluginModel,
-    UnknownPlugin,
     MissingAnyVersion,
     MissingCurrentVersion,
     MissingPendingVersion,
+    MissingPluginModel,
     MissingWorkingUpdateError,
     NewPluginVersion,
+    UnknownPlugin,
     WrongPluginType,
 )
-from .terms import TermType
+from .resource import File
 from .task.builder import TaskBuilder
 from .task.workflow import UpdatePlugin
-from .resource import File
+from .terms import TermType
 
 if TYPE_CHECKING:
-    from . import db as db_
-    from .task.base import Task
-    from .etl import ETLSpec, ETL
+    from .db_utils import CoreTypeModel
+    from .etl import ETL, ETLSpec
     from .harmonizer import Harmonizer
+    from .task.base import Task
     from .task.transform import HarmonizeRawData
 
 logger = getLogger()
@@ -189,7 +184,7 @@ class BasePlugin:
         except MissingPluginModel:
             return False
 
-        return cast(bool, current.status == UpdateStatus.INSTALLED)
+        return current.status == UpdateStatus.INSTALLED
 
     def _init_tasks(self) -> None:
         pass
@@ -551,19 +546,12 @@ class UpdateManager:
         self.str_to_version = str_to_version
         self._working: Optional[PluginUpdate] = None
 
-    @property
-    def _db(self) -> Any:
-        from . import db
-
-        return db
-
     def add_latest_version(self, latest_version: Version) -> PluginVersion:
         # create new latest version
         plugin_version = PluginVersion(
             plugin_name=self.pname, version_str=str(latest_version)
         )
-        db = self._db
-        db.session.add(plugin_version)
+        session.add(plugin_version)
         return plugin_version
 
     @property
@@ -576,8 +564,7 @@ class UpdateManager:
 
     @property
     def model(self) -> PluginModel:
-        db = self._db
-        plugin_model = db.session.query(PluginModel).get(self.pname)
+        plugin_model = session.query(PluginModel).get(self.pname)
         if not plugin_model:
             raise MissingPluginModel(self.pname)
 
@@ -609,9 +596,8 @@ class UpdateManager:
 
     def remove_files(self, version: "Version") -> None:
         """Remove files from file system and DB"""
-        db = self._db
         plugin_version = (
-            db.session.query(PluginVersion)
+            session.query(PluginVersion)
             .filter_by(plugin_name=self.pname, version_str=str(version))
             .join(PluginUpdate)
             .first()
@@ -625,13 +611,12 @@ class UpdateManager:
                 os.remove(file_update.qname)
             except FileNotFoundError:
                 self.logger.debug(f"File not found: {file_update.qname}")
-            db.session.delete(file_update)
-        db.session.commit()
+            session.delete(file_update)
+        session.commit()
 
     def remove_tables(self, version: "Version") -> None:
-        db = self._db
         plugin_version = (
-            db.session.query(PluginVersion)
+            session.query(PluginVersion)
             .filter_by(plugin_name=self.pname, version_str=str(version))
             .join(PluginUpdate)
             .first()
@@ -640,15 +625,14 @@ class UpdateManager:
             return
 
         table_updates = plugin_version.plugin_update.table_updates
-        db = self._db
         for table_update in table_updates.values():
-            db.engine.execute("SET FOREIGN_KEY_CHECKS = 0")
-            db.engine.execute(f"TRUNCATE TABLE {table_update.name}")
-            db.engine.execute(f"ALTER TABLE {table_update.name} AUTO_INCREMENT = 1")
-            db.engine.execute("SET FOREIGN_KEY_CHECKS = 1")
+            engine.execute("SET FOREIGN_KEY_CHECKS = 0")
+            engine.execute(f"TRUNCATE TABLE {table_update.name}")
+            engine.execute(f"ALTER TABLE {table_update.name} AUTO_INCREMENT = 1")
+            engine.execute("SET FOREIGN_KEY_CHECKS = 1")
 
-            db.session.commit()
-            db.session.delete(table_update)
+            session.commit()
+            session.delete(table_update)
 
     @property
     def tnames(self) -> Sequence[str]:
@@ -919,7 +903,7 @@ class CoreType(BasePlugin, ABC):
                 core_type.logger.warning("Could not register harmonizer.")
 
     @property
-    def model(self) -> "db_.Model":
+    def model(self) -> Type["CoreTypeModel"]:
         raise NotImplementedError
 
     def register_harmonize_raw_data_task(self, task: "HarmonizeRawData") -> None:
@@ -984,3 +968,10 @@ class CoreTypeMeta:
     @cached_property
     def default_fields(self) -> Mapping[str, Union[CoreTypeField, ma.Field]]:
         return {name: default_field(field) for name, field in self.fields.items()}
+
+    def parse_args(self, query_args: Mapping[str, Any]) -> Mapping[str, Any]:
+        args = {}
+        for key in self.fields.keys():
+            if key in query_args:
+                args[key] = query_args[key]
+        return args

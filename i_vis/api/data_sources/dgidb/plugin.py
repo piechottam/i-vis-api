@@ -11,23 +11,25 @@ DGIdb
 """
 import datetime
 from functools import cache
-from typing import Callable, TYPE_CHECKING, Sequence, cast
+from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence, cast
 
 import pandas as pd
-from pandas import DataFrame
+from dask import dataframe as dd
+from pandas import DataFrame, Series
 
-from i_vis.core.version import Date as DateVersion, recent
+from i_vis.core.version import Date as DateVersion
+from i_vis.core.version import recent
 
-from . import meta
-from ...config_utils import get_config
 from ... import terms as t
+from ...config_utils import get_config
 from ...core_types.drug.plugin import add_chembl_mapping_rid
-from ...df_utils import i_vis_col, tsv_io
+from ...df_utils import tsv_io
 from ...etl import ETLSpec, Simple
 from ...plugin import DataSource
 from ...resource import File
 from ...task.transform import Process
 from ...utils import BaseUrl as Url
+from . import meta
 
 if TYPE_CHECKING:
     from ...resource import ResourceId, Resources
@@ -87,9 +89,8 @@ def get_dates() -> Sequence[str]:
     return cast(Sequence[str], tbls[0]["Date"].to_list())
 
 
-def clean_drug_names(df: DataFrame, col: str) -> DataFrame:
-    df[i_vis_col(col)] = df[col].str.replace("^chembl:", "", regex=True)
-    return df
+def clean_drug_names(drug_names: Series) -> Series:
+    return cast(Series, drug_names.str.replace("^chembl:", "", regex=True))
 
 
 class FilterChEMBLMapping(Process):
@@ -100,19 +101,25 @@ class FilterChEMBLMapping(Process):
             out_res=out_file,
         )
 
+    def dask_meta(self, df: dd.DataFrame) -> Mapping[str, Any]:
+        return {
+            "chembl_id": str,
+            "name": str,
+            "data_sources": str,
+        }
+
     def _process(self, df: DataFrame, context: "Resources") -> DataFrame:
+        # FIXME 2x clean - how to apply columns
         # Filter ChEMBL IDs
         chembl_rows = df["concept_id"].str.startswith("chembl:", na=False)
         df = df[chembl_rows].copy()
-        # Clean ChEMBL ID prefix"
-        df["chembl_id"] = df["concept_id"].str.replace("^chembl:", "", regex=True)
         # ChEMBL IDs that are use as drug names
         cols = ["drug_claim_name", "drug_name"]
-        for col in cols:
-            df = clean_drug_names(df, col)
-        cols = [i_vis_col(col) for col in cols]
+        for col in cols + ["concept_id"]:
+            df[col] = clean_drug_names(df[col])
         # retain needed columns
-        df = df.loc[:, ["chembl_id"] + cols]
+        df = df.loc[:, cols + ["concept_id"]]
+        df.rename(columns={"concept_id": "chembl_id"}, inplace=True)
         df = df.melt(
             id_vars="chembl_id",
             value_vars=cols,
@@ -121,6 +128,7 @@ class FilterChEMBLMapping(Process):
         df = df[["chembl_id", "name"]].dropna().drop_duplicates()
         df["data_sources"] = self.pname
         self.logger.info(f"{len(df)} ChEMBL IDs retained")
+        breakpoint()
         return df
 
 

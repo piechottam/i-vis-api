@@ -18,27 +18,29 @@ For citing Drugbank and other information go to: https://go.drugbank.com/about
 :credentials: username, password
 """
 
-from typing import Any, Mapping, Sequence, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 import requests
+from dask import dataframe as dd
 from packaging.version import parse
 from pandas import DataFrame, Series
 from requests.auth import HTTPBasicAuth
 
-from i_vis.core.version import Default as DefaultVersion
 from i_vis.core.utils import StatusCode200Error
+from i_vis.core.version import Default as DefaultVersion
 
-from . import meta
+from ... import df_utils
 from ... import terms as t
 from ...config_utils import get_config
 from ...core_types.drug.plugin import add_chembl_mapping_rid
-from ...df_utils import i_vis_col, tsv_io, flat_parquet_io
-from ...etl import ETLSpec, Simple, Modifier
+from ...df_utils import parquet_io, tsv_io
+from ...etl import ETLSpec, Modifier, Simple
 from ...plugin import DataSource
 from ...plugin_exceptions import LatestUrlRetrievalError
 from ...resource import Parquet
-from ...task.transform import Process, ConvertXML
+from ...task.transform import ConvertXML, Process
 from ...utils import DynamicUrl as Url
+from . import meta
 
 if TYPE_CHECKING:
     from ...resource import Resources
@@ -121,9 +123,8 @@ def extract_synonyms(synonyms: Series) -> Sequence[str]:
     ]
 
 
-def extract_synonyms_wrapper(df: DataFrame, col: str) -> DataFrame:
-    df[i_vis_col(col)] = df[col].apply(extract_synonyms)
-    return df
+def extract_synonyms_wrapper(synonyms: Series) -> Series:
+    return Series(synonyms.apply(extract_synonyms))
 
 
 def extract_chembl(external_ids: Series) -> Sequence[str]:
@@ -143,13 +144,21 @@ def extract_chembl(external_ids: Series) -> Sequence[str]:
     return result
 
 
-def extract_chembl_wrapper(df: DataFrame, col: str) -> DataFrame:
-    df[i_vis_col(col)] = df[col].apply(extract_chembl)
-    return df
+def extract_chembl_wrapper(external_ids: Series) -> Series:
+    return Series(external_ids.apply(extract_chembl))
 
 
 class FilterChEMBLMapping(Process):
+    def dask_meta(self, df: dd.DataFrame) -> Mapping[str, Any]:
+        return {
+            "chembl_id": str,
+            "name": str,
+            "data_sources": str,
+        }
+
     def _process(self, df: DataFrame, context: "Resources") -> DataFrame:
+        df = df_utils.deserialize(df)
+
         new_df = DataFrame()
         new_df["chembl_id"] = df["external_identifiers"].apply(extract_chembl)
         new_df["name"] = df["name"]
@@ -187,7 +196,7 @@ class Spec(ETLSpec):
             ConvertXML,
             task_opts={
                 "out_fname": "_" + meta.name + ".parquet",
-                "io": flat_parquet_io,
+                "io": parquet_io,
                 "getter": lambda dt: dt["drugbank"]["drug"],
                 "add_id": True,
             },

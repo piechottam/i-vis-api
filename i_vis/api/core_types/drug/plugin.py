@@ -1,36 +1,33 @@
 import os
-from typing import Any, Sequence, TYPE_CHECKING
 from functools import cached_property
+from typing import TYPE_CHECKING, Any, Sequence, Type
 
 import pandas as pd
-
 from flask_marshmallow.fields import URLFor
-
 from i_vis.core.version import Default as DefaultVersion
 
-from . import meta
-from ...config_utils import get_config
-from .models import (
-    Drug,
-    DrugMixin,
-    CHEMBL_ID,
-    CHEMBL_PREFIX,
-    DrugName,
-    DRUG_NAME_MAX_LENGTH,
-)
 from ... import config_meta, ma
+from ...config_utils import get_config
 from ...df_utils import tsv_io
 from ...harmonizer import Harmonizer, SimpleHarmonizer
 from ...plugin import CoreType, CoreTypeField, CoreTypeMeta
-from ...resource import ResourceId, ResourceIds, File
+from ...resource import File, ResourceId, ResourceIds
 from ...task.transform import Transform
+from . import meta
+from .models import (
+    CHEMBL_ID,
+    CHEMBL_PREFIX,
+    DRUG_NAME_MAX_LENGTH,
+    Drug,
+    DrugMixin,
+    DrugName,
+)
 
 # from ...query import set_ops
 
 if TYPE_CHECKING:
-    from ...terms import TermType
-    from ... import db
     from ...resource import Resources
+    from ...terms import TermType
 
 _mapping_rids = ResourceIds()
 
@@ -124,11 +121,9 @@ class Plugin(CoreType):
         )
 
     def _init_tasks(self) -> None:
+        from ...data_sources.chembl import POST_MERGED_MAPPING_FNAME
+        from ...data_sources.chembl import meta as chembl_meta
         from ...task.transform import BuildDict
-        from ...data_sources.chembl import (
-            meta as chembl_meta,
-            POST_MERGED_MAPPING_FNAME,
-        )
 
         drugs_file = self.task_builder.res_builder.file(
             fname=DRUGS_FNAME,
@@ -177,7 +172,7 @@ class Plugin(CoreType):
         )
 
     @property
-    def model(self) -> "db.Model":
+    def model(self) -> Type[Drug]:
         return Drug
 
 

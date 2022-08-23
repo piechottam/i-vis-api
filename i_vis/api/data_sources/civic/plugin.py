@@ -12,33 +12,32 @@ CIViC
 
 import io
 from typing import (
-    cast,
-    Any,
-    MutableSequence,
     TYPE_CHECKING,
-    Optional,
+    Any,
+    Iterable,
     List,
     Mapping,
+    MutableSequence,
+    Optional,
     Union,
-    Iterable,
+    cast,
 )
 
 import pandas as pd
+from sqlalchemy import Column, Integer
 
 from i_vis.core.version import Date as DateVersion
 
-from . import meta
-from ... import db
 from ... import terms as t
 from ...df_utils import PandasDataFrameIO, tsv_io
-from ...etl import Exposed, Simple, ETLSpec, ExposeInfo
+from ...etl import ETLSpec, Exposed, ExposeInfo, Simple
 from ...plugin import DataSource
 from ...utils import VariableUrl as Url
-
+from . import meta
 
 if TYPE_CHECKING:
     from ...resource import Resource
-    from ...utils import I_VIS_Logger
+    from ...utils import ivis_logger
 
 _URL_PREFIX = "https://civicdb.org/downloads/nightly/nightly-"
 
@@ -92,7 +91,7 @@ class CustomIO(PandasDataFrameIO):
         super().__init__(read_callback="read_csv", read_opts=read_opts_)
 
     def _read_df(
-        self, in_res: "Resource", logger: Optional["I_VIS_Logger"] = None, **kwargs: Any
+        self, in_res: "Resource", logger: Optional["ivis_logger"] = None, **kwargs: Any
     ) -> Union[pd.DataFrame, Iterable[pd.DataFrame]]:
         read_opts = dict(self._read_opts)
         if kwargs:
@@ -141,8 +140,8 @@ class GeneSummary(ETLSpec):
             # TODO
             gene_id = Exposed(
                 exposed_info=ExposeInfo(
-                    db_column=db.Column(
-                        db.Integer(),
+                    db_column=Column(
+                        Integer(),
                         # nullable=False,
                         index=True,
                         unique=True,

@@ -10,25 +10,26 @@ COSMIC
 :credentials: username, password
 """
 
-from typing import Callable
-import re
 import os
+import re
 from base64 import b64encode
+from typing import Callable, cast
 
 import requests
-from pandas import DataFrame
+from pandas import Series
 
 from i_vis.core.constants import GenomeAssembly
-from i_vis.core.version import Default as DefaultVersion, by_xpath
 from i_vis.core.utils import StatusCode200Error
+from i_vis.core.version import Default as DefaultVersion
+from i_vis.core.version import by_xpath
 
-from . import meta
-from ...config_utils import get_config
 from ... import terms as t
-from ...df_utils import DaskDataFrameIO, i_vis_col, csv_io
-from ...etl import Simple, ETLSpec
+from ...config_utils import get_config
+from ...df_utils import DaskDataFrameIO, csv_io
+from ...etl import ETLSpec, Simple
 from ...plugin import DataSource
 from ...utils import DynamicUrl
+from . import meta
 
 _URL_PREFIX_VAR = meta.register_variable(
     name="URL_PREFIX",
@@ -212,15 +213,13 @@ class CGC(ETLSpec):
             synonyms = Simple(terms=[t.GeneName], modifier={"pat": ","})
 
 
-def clean_gene_name(df: DataFrame, col: str) -> DataFrame:
+def clean_gene_name(gene_names: Series) -> Series:
     # t.HGNCsymbol"_"EnsemblTranscript
-    df[i_vis_col(col)] = df[col].str.replace(r"^(.+)_ENST.+", r"\1", regex=True)
-    return df
+    return cast(Series, gene_names.str.replace(r"^(.+)_ENST.+", r"\1", regex=True))
 
 
-def fix_hgnc_id(df: DataFrame, col: str) -> DataFrame:
-    df[i_vis_col(col)] = "HGNC:" + df[col].astype(str)
-    return df
+def fix_hgnc_id(hgnc_ids: Series) -> Series:
+    return "HGNC:" + hgnc_ids.astype(str)
 
 
 class MutantExport(ETLSpec):
@@ -274,7 +273,7 @@ class MutantExport(ETLSpec):
             pubmed_pmid = Simple(terms=[t.PMID])
             id_study = Simple()
             sample_type = Simple()
-            tumour_origin = Simple(terms=[t.CancerType])  # type
+            tumour_origin = Simple(terms=[t.CancerType])
             age = Simple()
             hgvsp = Simple(terms=[t.HGVSp()])
             hgvsc = Simple(terms=[t.HGVSc()])

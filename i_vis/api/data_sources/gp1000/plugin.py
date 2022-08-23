@@ -10,11 +10,12 @@
 :credentials: none
 """
 
+from sqlalchemy import Column, ForeignKey, Integer
+
 from i_vis.core.version import Default as DefaultVersion
 
 from . import meta
 from ...config_utils import get_config
-from ... import db
 from ... import terms as t
 from ...df_utils import tsv_io
 from ...db_utils import internal_fk
@@ -62,8 +63,8 @@ class SeqRegion(ETLSpec):
         class Raw:
             seq_region_id = Exposed(
                 exposed_info=ExposeInfo(
-                    db_column=db.Column(
-                        db.Integer,
+                    db_column=Column(
+                        Integer,
                         nullable=False,
                         index=True,
                         unique=True,
@@ -85,8 +86,8 @@ class Variation(ETLSpec):
             variation_feature_id = Simple()
             seq_region_id = Exposed(
                 exposed_info=ExposeInfo(
-                    db_column=db.Column(
-                        db.ForeignKey(
+                    db_column=Column(
+                        ForeignKey(
                             internal_fk(
                                 pname=meta.name,
                                 part_name=SeqRegion.part_name,

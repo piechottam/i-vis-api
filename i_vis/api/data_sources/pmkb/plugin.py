@@ -10,17 +10,18 @@ PMKB
 :credentials: none
 """
 
-from typing import Any, TYPE_CHECKING, Optional, Iterable, Union
+from typing import TYPE_CHECKING, Any, Iterable, Optional, Union
+
 import pandas as pd
 
 from i_vis.core.version import Default as DefaultVersion
 
-from . import meta
 from ... import terms as t
-from ...etl import Simple, ETLSpec
+from ...df_utils import PandasDataFrameIO
+from ...etl import ETLSpec, Simple
 from ...plugin import DataSource
 from ...utils import VariableUrl as Url
-from ...df_utils import PandasDataFrameIO
+from . import meta
 
 _URL_VAR = meta.register_variable(
     name="URL",
@@ -29,7 +30,7 @@ _URL_VAR = meta.register_variable(
 
 if TYPE_CHECKING:
     from ...resource import Resource
-    from ...utils import I_VIS_Logger
+    from ...utils import ivis_logger
 
 
 class Plugin(DataSource):
@@ -48,7 +49,7 @@ class CustomReader(PandasDataFrameIO):
         super().__init__(read_callback="read_excel", read_opts={"engine": "openpyxl"})
 
     def _read_df(
-        self, in_res: "Resource", logger: Optional["I_VIS_Logger"] = None, **kwargs: Any
+        self, in_res: "Resource", logger: Optional["ivis_logger"] = None, **kwargs: Any
     ) -> Union[pd.DataFrame, Iterable[pd.DataFrame]]:
         df = super()._read_df(in_res, logger, **kwargs)
         if isinstance(df, pd.DataFrame):

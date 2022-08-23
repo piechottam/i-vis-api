@@ -1,22 +1,21 @@
-﻿from typing import (
+﻿import itertools
+from typing import (
+    TYPE_CHECKING,
     Any,
     Callable,
-    cast,
-    Union,
+    Mapping,
     MutableMapping,
     MutableSequence,
-    Mapping,
     Optional,
     Sequence,
     Tuple,
-    TYPE_CHECKING,
     Type,
+    cast,
 )
-import itertools
 
 from flask import url_for
 from flask.views import MethodView
-from sqlalchemy import union_all
+from sqlalchemy import Column, inspect, union_all
 
 from i_vis.core.blueprint import (
     Blueprint,
@@ -27,20 +26,19 @@ from i_vis.core.blueprint import (
 )
 
 # pylint: disable=unused-import
-from .. import db, ma
-from .. import arguments, schemas
-from ..plugin import CoreType, DataSource
+from .. import Base, arguments, ma, schemas, session
 from ..etl import etl_registry
-from ..query_utils import (
-    # TODO parts_by_non_hgvs,
-    # TODO parts_by_hgvs,
+from ..plugin import CoreType, DataSource
+from ..query_utils import (  # TODO parts_by_non_hgvs,; TODO parts_by_hgvs,
+    etl_by_non_hgvs,
     parse_core_types_args,
     parse_exposed_args,
-    etl_by_non_hgvs,
 )
 from ..utils import clean_query_args
 
 if TYPE_CHECKING:
+    from sqlalchemy.orm import Query
+
     from ..harmonizer import QueryResult
 
 GetCallback = Callable[[Any], Any]
@@ -120,9 +118,9 @@ def register_stats(
 def register_browse(
     core_type_name: str,
     blp: Blueprint,
-    model: db.Model,
+    model: Type[Base],
     schema: ma.Schema,
-    column: db.Column,
+    column: Column[Any],
     endpoint: str = "",
 ) -> Tuple[str, GetCallback]:
     core_type = CoreType.get(core_type_name)
@@ -160,14 +158,14 @@ def register_browse(
 
         return QueryWrapper(
             column,
-            db.session.query(model),
+            session.query(model),
             links={
                 "self": url_for(f"{core_type.blueprint_name}.{endpoint}", **self_args),
                 "collection": url_for(
                     f"{core_type.blueprint_name}.{endpoint}", **collection_args
                 ),
-                "next": helper,
             },
+            next_callback=helper,
         )
 
     get.__doc__ = f"""Browse '{core_type.short_name}s' of integrated parts
@@ -204,7 +202,7 @@ def register_show(
         view_args: Mapping[str, Any],
         **_kwargs: Any,
     ) -> Any:
-        return db.session.query(model).get(view_args[target])
+        return session.query(model).get(view_args[target])
 
     get.__doc__ = f"""Show specific '{core_type.short_name}' using '{target}'
 
@@ -282,7 +280,7 @@ def register_explorer(
         query_core_types.add(core_type)
 
         results: MutableMapping[str, Any] = {}
-        db_queries: MutableSequence[db.Query] = []
+        db_queries: MutableSequence["Query[Any]"] = []
         for part in query_args["part"]:
             etl = etl_registry.by_part(part)
             assert etl is not None
@@ -296,9 +294,7 @@ def register_explorer(
             print(f"{str(db_query)=}")
             db_queries.append(db_query)
 
-        for part, target_value, count in db.session.execute(
-            union_all(*db_queries)
-        ).all():
+        for part, target_value, count in session.execute(union_all(*db_queries)).all():
             etl = etl_registry.by_part(part)
             assert etl is not None
 
@@ -339,13 +335,12 @@ def register_explorer(
                 **query_kwargs,
             )
 
-        links: MutableMapping[str, Union[str, Callable[[int], str]]] = {
+        links: MutableMapping[str, str] = {
             "self": url_for(
                 f"{core_type.blueprint_name}.{endpoint}", **clean_query_args(query_args)
             ),
-            "next": helper,
         }
-        return DictWrapper(results=results, links=links)
+        return DictWrapper(results=results, links=links, next_callback=helper)
 
     get.__doc__ = f"""Show specific '{core_type.short_name}' using '{core_type.harm_meta.target}'
 
@@ -359,7 +354,7 @@ def register_explorer(
     )
 
 
-def generic_stats(core_type: "CoreType") -> Sequence[Mapping[str, int]]:
+def generic_stats(core_type: "CoreType") -> Sequence[Mapping[str, Any]]:
     stats = []
     for etl in etl_registry.by_core_type(core_type):
         data_source = DataSource.get(etl.pname)
@@ -369,7 +364,7 @@ def generic_stats(core_type: "CoreType") -> Sequence[Mapping[str, int]]:
 
         harmonized_model = etl.core_type2model[core_type]
         harmonized_table_update = data_source.updater.current.table_updates[
-            harmonized_model.__tablename__
+            inspect(harmonized_model).local_table.name
         ]
         harmonized = harmonized_table_update.row_count
 
@@ -380,7 +375,7 @@ def generic_stats(core_type: "CoreType") -> Sequence[Mapping[str, int]]:
                 getattr(harmonized_model, target)
                 for target in core_type.harm_meta.targets
             ]
-        q = db.session.query(harmonized_model)
+        q = session.query(harmonized_model)
         for target_attr in target_attrs:
             q = q.with_entities(target_attr)
         q = q.distinct()
@@ -435,7 +430,7 @@ def _process_harm_res(
     matched_names, matched_targets, meta_info = harm_res
     result_mapping = {
         getattr(gene, harm_meta.target): gene
-        for gene in db.session.query(core_type.model)
+        for gene in session.query(core_type.model)
         .filter(
             getattr(
                 core_type.model,

@@ -1,33 +1,32 @@
 import os
-from typing import Any, Sequence, TYPE_CHECKING
 from functools import cached_property
+from typing import TYPE_CHECKING, Any, Sequence, Type
 
 from flask_marshmallow.fields import URLFor
+from i_vis.core.version import Default as DefaultVersion
+from i_vis.core.version import Version
 
-from i_vis.core.version import Default as DefaultVersion, Version
-
-from . import meta
-from .models import (
-    CancerType,
-    CancerTypeName,
-    CancerTypeMixin,
-    DO_ID,
-    CANCER_TYPE_NAME_MAX_LENGTH,
-    DOID_PREFIX,
-)
 from ... import config_meta, ma
-from ...df_utils import tsv_io
-from ...harmonizer import SimpleHarmonizer, Harmonizer
-from ...plugin import CoreType, CoreTypeMeta, CoreTypeField
-from ...resource import ResourceId, ResourceIds
-from ...task.transform import BuildDict
 
 # from ...query import set_ops
 from ...config_utils import get_config
+from ...df_utils import tsv_io
+from ...harmonizer import Harmonizer, SimpleHarmonizer
+from ...plugin import CoreType, CoreTypeField, CoreTypeMeta
+from ...resource import ResourceId, ResourceIds
+from ...task.transform import BuildDict
+from . import meta
+from .models import (
+    CANCER_TYPE_NAME_MAX_LENGTH,
+    DO_ID,
+    DOID_PREFIX,
+    CancerType,
+    CancerTypeMixin,
+    CancerTypeName,
+)
 
 if TYPE_CHECKING:
     from ...terms import TermType
-    from ... import db
 
 _mapping_rids = ResourceIds()
 
@@ -157,5 +156,5 @@ class Plugin(CoreType):
         return DefaultVersion(major=1)
 
     @property
-    def model(self) -> "db.Model":
+    def model(self) -> Type[CancerType]:
         return CancerType

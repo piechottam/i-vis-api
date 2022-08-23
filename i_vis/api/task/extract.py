@@ -1,33 +1,34 @@
+import ftplib
+import logging
+import os
+import time
+from abc import ABC
+from datetime import datetime
 from typing import (
+    TYPE_CHECKING,
     Any,
     Callable,
     Mapping,
     MutableMapping,
     Optional,
     Sequence,
-    TYPE_CHECKING,
 )
-import ftplib
-import logging
-import os
-from abc import ABC
-from datetime import datetime
 from urllib.parse import urlparse, urlunparse
-import time
 
 import pandas as pd
 import requests
 from sqlalchemy import create_engine
 from tqdm import tqdm
 
-from i_vis.core.file_utils import modified as file_modified, size as file_size
+from i_vis.core.file_utils import modified as file_modified
+from i_vis.core.file_utils import size as file_size
 
-from .base import Task, TaskType
 from ..df_utils import normalize_columns
 from ..utils import BaseUrl, tqdm_desc
+from .base import Task, TaskType
 
 if TYPE_CHECKING:
-    from ..resource import Resources, File
+    from ..resource import File, Resources
 
 
 logger = logging.getLogger("task")
@@ -39,21 +40,20 @@ class ByPackage:
         self.version = version
 
 
-class Extract(Task, ABC):
+class Base(Task, ABC):
     @property
     def type(self) -> TaskType:
         return TaskType.EXTRACT
 
 
-# TODO exception handling
 class ExtractFailed(Exception):
-    def __init__(self, task: Extract) -> None:
+    def __init__(self, task: Base) -> None:
         Exception.__init__(self)
         self.task = task
 
 
 # pylint: disable=too-many-arguments
-class Download(Extract):
+class Download(Base):
     def __init__(
         self,
         urls: Sequence[str],
@@ -293,7 +293,7 @@ class HTTP(Download):
 
 
 # pylint: disable=too-many-arguments
-class Delayed(Extract):
+class Delayed(Base):
     def __init__(
         self,
         url: BaseUrl,
@@ -311,7 +311,7 @@ class Delayed(Extract):
         task._do_work(context)
 
 
-class DumpTbl(Extract):
+class DumpTbl(Base):
     """Task to dump table
 
     Args:
@@ -337,9 +337,10 @@ class DumpTbl(Extract):
         # extract tname and db from url, e.g.: mysql://user:pass@host:port/dbname/tname
         parsed = urlparse(url)
         tname = os.path.basename(parsed.path)
-        db = os.path.dirname(parsed.path)
         # url without tname
-        parsed_url = parsed._replace(path=db).geturl()
+        parsed_url = parsed._replace(
+            path=os.path.dirname(parsed.path),
+        ).geturl()
 
         engine = create_engine(parsed_url, server_side_cursors=True)
         with engine.connect() as conn:
@@ -384,7 +385,7 @@ def create_dump_tbl(url: str, out_file: "File", **kwargs: Any) -> DumpTbl:
     return DumpTbl(url=url, out_file=out_file, **kwargs)
 
 
-scheme2create: Mapping[str, Callable[[str, "File", Any], Extract]] = {
+scheme2create: Mapping[str, Callable[[str, "File", Any], Base]] = {
     "HTTP": create_http,  # type: ignore
     "HTTPS": create_http,  # type: ignore
     "FTP": create_ftp,  # type: ignore
@@ -393,7 +394,7 @@ scheme2create: Mapping[str, Callable[[str, "File", Any], Extract]] = {
 }
 
 
-def create_task(url: str, out_file: "File", **kwargs: Any) -> Extract:
+def create_task(url: str, out_file: "File", **kwargs: Any) -> Base:
     scheme = urlparse(url).scheme.upper()
     try:
         create = scheme2create[scheme]

@@ -12,22 +12,23 @@ TODO index data
 :credentials: none
 """
 
-from typing import cast, MutableSequence, Callable
+from typing import Any, Callable, MutableSequence, cast
+
 import requests
 from lxml import etree
+from sqlalchemy import Column, ForeignKey, String
 
-from i_vis.core.version import Date as DateVersion
 from i_vis.core.utils import StatusCode200Error
+from i_vis.core.version import Date as DateVersion
 
-from . import meta
-from ...config_utils import get_config
-from ... import db
 from ... import terms as t
-from ...df_utils import DaskDataFrameIO
+from ...config_utils import get_config
 from ...db_utils import internal_fk
-from ...etl import ETLSpec, Exposed, Simple, ExposeInfo
+from ...df_utils import DaskDataFrameIO
+from ...etl import ETLSpec, Exposed, ExposeInfo, Simple
 from ...plugin import DataSource
 from ...resource import File
+from . import meta
 
 _URL_PREFIX_VAR = meta.register_variable(
     name="URL_PREFIX",
@@ -203,10 +204,11 @@ class Study(ETLSpec):
 
         class Raw:
             nct_id = Exposed(
+                dtype=str,
                 terms=[t.NCTid],
                 exposed_info=ExposeInfo(
-                    db_column=db.Column(
-                        db.String(NCT_ID_LEN),
+                    db_column=Column(
+                        String(NCT_ID_LEN),
                         nullable=False,
                         index=True,
                         unique=True,
@@ -278,9 +280,9 @@ class Study(ETLSpec):
             updated_at = Simple()
 
 
-def nct_id_fk_col() -> db.Column:
-    return db.Column(
-        db.ForeignKey(
+def nct_id_fk_col() -> Column[Any]:
+    return Column(
+        ForeignKey(
             internal_fk(
                 pname=meta.name,
                 part_name=Study.part_name,
@@ -300,7 +302,8 @@ class BriefSummary(ETLSpec):
 
         class Raw:
             nct_id = Exposed(
-                terms=[t.NCTid], exposed_info=ExposeInfo(db_column=nct_id_fk_col())
+                terms=[t.NCTid],
+                exposed_info=ExposeInfo(db_column=nct_id_fk_col()),
             )
 
 
@@ -312,7 +315,8 @@ class DetailedDescription(ETLSpec):
 
         class Raw:
             nct_id = Exposed(
-                terms=[t.NCTid], exposed_info=ExposeInfo(db_column=nct_id_fk_col())
+                terms=[t.NCTid],
+                exposed_info=ExposeInfo(db_column=nct_id_fk_col()),
             )
 
 
@@ -324,7 +328,8 @@ class Eligibility(ETLSpec):
 
         class Raw:
             nct_id = Exposed(
-                terms=[t.NCTid], exposed_info=ExposeInfo(db_column=nct_id_fk_col())
+                terms=[t.NCTid],
+                exposed_info=ExposeInfo(db_column=nct_id_fk_col()),
             )
 
 
@@ -337,7 +342,8 @@ class Condition(ETLSpec):
         class Raw:
             id = Simple()
             nct_id = Exposed(
-                terms=[t.NCTid], exposed_info=ExposeInfo(db_column=nct_id_fk_col())
+                terms=[t.NCTid],
+                exposed_info=ExposeInfo(db_column=nct_id_fk_col()),
             )
             name = Simple(terms=[t.Disease, t.CancerType()])
             downcase_name = Simple()
@@ -352,7 +358,8 @@ class Intervention(ETLSpec):
         class Raw:
             id = Simple()
             nct_id = Exposed(
-                terms=[t.NCTid], exposed_info=ExposeInfo(db_column=nct_id_fk_col())
+                terms=[t.NCTid],
+                exposed_info=ExposeInfo(db_column=nct_id_fk_col()),
             )
             intervention_type = Simple()
             name = Simple(terms=[t.Drug])
@@ -368,7 +375,8 @@ class StudyReference(ETLSpec):
         class Raw:
             id = Simple()
             nct_id = Exposed(
-                terms=[t.NCTid], exposed_info=ExposeInfo(db_column=nct_id_fk_col())
+                terms=[t.NCTid],
+                exposed_info=ExposeInfo(db_column=nct_id_fk_col()),
             )
             pmid = Simple(terms=[t.PMID])
             reference_type = Simple()
@@ -384,7 +392,8 @@ class Facility(ETLSpec):
         class Raw:
             id = Simple()
             nct_id = Exposed(
-                terms=[t.NCTid], exposed_info=ExposeInfo(db_column=nct_id_fk_col())
+                terms=[t.NCTid],
+                exposed_info=ExposeInfo(db_column=nct_id_fk_col()),
             )
             status = Simple()
             name = Simple()

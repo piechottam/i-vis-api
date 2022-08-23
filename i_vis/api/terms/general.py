@@ -1,36 +1,33 @@
 from inspect import isclass
 from typing import (
+    TYPE_CHECKING,
     Any,
-    cast,
-    Optional,
     Mapping,
-    Sequence,
     MutableSequence,
+    Optional,
+    Sequence,
     Type,
     Union,
-    TYPE_CHECKING,
+    cast,
 )
-
-from sqlalchemy.util import classproperty
 
 if TYPE_CHECKING:
     from ..plugin import CoreType
 
 
-# custom expand
 class Term:
     _core_type: Optional["CoreType"] = None
 
     def __init__(self, harmonize: bool = True) -> None:
         self._harmonize = harmonize
 
-    @classproperty
-    def parent(self) -> type:
-        return cast(type, self).__base__  # pylint: disable=no-member
+    @classmethod
+    def get_parent(cls) -> type:
+        return cast(type, cls).__base__  # pylint: disable=no-member
 
-    @classproperty
-    def children(self) -> Sequence[Type["Term"]]:
-        return cast(Sequence[Type["Term"]], getattr(self, "__subclasses__")())
+    @classmethod
+    def get_children(cls) -> Sequence[Type["Term"]]:
+        return cast(Sequence[Type["Term"]], getattr(cls, "__subclasses__")())
 
     @classmethod
     def is_parent(cls, other: Any) -> bool:
@@ -38,29 +35,28 @@ class Term:
             other = other.__class__
         return issubclass(cls, other)
 
-    @classproperty
-    def name(self) -> str:
-        return cast(type, self).__name__  # pylint: disable=no-member
+    @classmethod
+    def get_name(cls) -> str:
+        return cast(type, cls).__name__  # pylint: disable=no-member
 
     @classmethod
     # pylint: disable=unused-argument
     def isinstance(cls, s: str) -> bool:
         return False
 
-    @classproperty
-    # pylint: disable=no-self-argument
-    def core_type(cls) -> "CoreType":
+    @classmethod
+    def get_core_type(cls) -> "CoreType":
         if not cls._core_type:
             raise AttributeError
 
         return cls._core_type
 
-    @classproperty
+    @classmethod
     # pylint: disable=no-self-argument
     def normalized_to(cls) -> str:
         if not cls._core_type:
             return ""
-        return cls.core_type.normalized_to
+        return cls.get_core_type().normalized_to
 
     @staticmethod
     def register_core_type(term: Type["Term"], core_type: "CoreType") -> None:
@@ -111,7 +107,7 @@ def find_terms(
 
 def term_to_dict(term: Type[Term]) -> Mapping[str, Any]:
     return {
-        "name": "Root" if term == Term else term.name,
+        "name": "Root" if term == Term else term.get_name(),
         "subterms": [term_to_dict(term_) for term_ in term.__subclasses__()],
     }
 

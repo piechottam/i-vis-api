@@ -11,7 +11,7 @@ from .utils import (
     validate_plugins,
     validate_file_resid,
 )
-from .. import db
+from .. import session
 from ..resource import res_registry, ResourceId
 from ..plugin_exceptions import MissingPluginModel
 
@@ -88,8 +88,8 @@ def force(rid: ResourceId) -> None:
     for file_update in plugin_update.file_updates.values():
         if file_update.name == resource.name:
             file_update.update()
-            db.session.add(file_update)
-            db.session.commit()
+            session.add(file_update)
+            session.commit()
             print("File info have been updated.")
             return
     plugin_update.add(resource)

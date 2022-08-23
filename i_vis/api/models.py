@@ -1,55 +1,53 @@
-from typing import (
-    cast,
-    Sequence,
-    Mapping,
-    MutableSequence,
-    MutableMapping,
-    Optional,
-    TYPE_CHECKING,
-    Tuple,
-    Any,
-    Union,
-)
-import os
-import enum
-from logging import getLogger
-from secrets import token_urlsafe
 import datetime
-
-from sqlalchemy.orm import (
-    declared_attr,
-    declarative_mixin,
-    Mapped,
+import enum
+import os
+from logging import getLogger
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Mapping,
+    MutableMapping,
+    MutableSequence,
+    Optional,
+    Sequence,
+    Tuple,
+    Union,
+    cast,
 )
+
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    Column,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Integer,
+    String,
+    UniqueConstraint,
+)
+from sqlalchemy.orm import Mapped, declarative_mixin, declared_attr, relationship
 from sqlalchemy.sql import func
 
-from i_vis.core.file_utils import (
-    size as file_size,
-    md5 as file_md5,
-    modified_datetime as file_modified_datetime,
-    path_size,
-    file_count,
-    latest_modified_date,
-    path_md5,
-)
-from i_vis.core.constants import API_TOKEN_LENGTH
-from i_vis.core.models import load_user, User as CommonUser, wrap_func
-from i_vis.core.utils import EnumMixin
-from i_vis.core.version import MAX_VERSION_LENGTH
 from i_vis.core.config import get_ivis
 from i_vis.core.db_utils import row_count as table_row_count
+from i_vis.core.file_utils import file_count, latest_modified_datetime
+from i_vis.core.file_utils import md5 as file_md5
+from i_vis.core.file_utils import modified_datetime as file_modified_datetime
+from i_vis.core.file_utils import path_md5, path_size
+from i_vis.core.file_utils import size as file_size
+from i_vis.core.models import User, load_user, wrap_func
+from i_vis.core.utils import EnumMixin
+from i_vis.core.version import MAX_VERSION_LENGTH
 
-from . import db, login
-from .utils import register_backup
+from . import Base, login, session
 from .resource import File, Parquet, Table
+from .utils import register_backup
 
 # pylint: disable=import-error
 if TYPE_CHECKING:
     from .plugin import BasePlugin
-    from .resource import (
-        Resource,
-        ResourceType,
-    )
+    from .resource import Resource, ResourceType
 
 logger = getLogger()
 login.user_loader(load_user)
@@ -65,27 +63,27 @@ class UpdateStatus(EnumMixin, enum.Enum):
 
 
 @register_backup
-class PluginUpdate(db.Model):
+class PluginUpdate(Base):
     __tablename__ = "plugin_updates"
 
     __mapper_args__ = {
         "confirm_deleted_rows": False,
     }
 
-    id = db.Column(db.ForeignKey("plugin_versions.id"), primary_key=True)
-    status = db.Column(
-        db.Enum(UpdateStatus), nullable=False, default=UpdateStatus.ONGOING
+    id: Mapped[int] = Column(ForeignKey("plugin_versions.id"), primary_key=True)
+    status: Mapped[UpdateStatus] = Column(
+        Enum(UpdateStatus), nullable=False, default=UpdateStatus.ONGOING
     )
-    installed_at = db.Column(
-        db.DateTime, nullable=False, default=func.now(), onupdate=func.now()
+    installed_at: Mapped[datetime.datetime] = Column(
+        DateTime, nullable=False, default=func.now(), onupdate=func.now()
     )
 
-    resource_updates: Mapped[MutableSequence["ResourceUpdate"]] = db.relationship(
+    resource_updates: Mapped[MutableSequence["ResourceUpdate"]] = relationship(
         "ResourceUpdate",
         cascade="all, delete-orphan",
         lazy="subquery",
     )
-    plugin_version: Mapped["PluginVersion"] = db.relationship(
+    plugin_version: Mapped["PluginVersion"] = relationship(
         "PluginVersion", uselist=False, back_populates="plugin_update", viewonly=True
     )
 
@@ -94,7 +92,7 @@ class PluginUpdate(db.Model):
     ) -> MutableMapping[str, "ResourceUpdate"]:
         return {
             res_update.name: res_update
-            for res_update in self.resource_updates  # pylint: disable=E1133
+            for res_update in self.resource_updates
             if res_update.type == rtype
         }
 
@@ -114,7 +112,7 @@ class PluginUpdate(db.Model):
 
     def add(self, resource: "Resource", **kwargs: Any) -> "ResourceUpdate":
         name = resource.name
-        rtype = resource.type
+        rtype = resource.get_type()
         if self.status in (UpdateStatus.INSTALLED,):
             msg = f"Fixing {rtype} '{name}'"
             logger.warning(msg)
@@ -122,39 +120,42 @@ class PluginUpdate(db.Model):
         res_update = res_updates.get(name)  # pylint: disable=no-member
 
         if not res_update:
-            assert self.id is not None
             res_update = ResourceUpdate.create(resource, self)
             res_update.update(kwargs)
             res_updates.update({name: res_update})
-            db.session.add(res_update)
-            db.session.commit()
+            session.add(res_update)
+            session.commit()
         else:
             uptodate, cache = res_update.check()
             if not uptodate:
                 res_update.update(cache)
             else:
                 res_update.updated_at = func.now()
-            db.session.add(res_update)
-            db.session.commit()
+            session.add(res_update)
+            session.commit()
         return res_update
 
 
 @register_backup
-class Plugin(db.Model):
+class Plugin(Base):
     __tablename__ = "plugins"
 
-    name = db.Column(db.String(30), primary_key=True)
-    current_update_id = db.Column(db.ForeignKey("plugin_updates.id"), nullable=True)
-    pending_update_id = db.Column(db.ForeignKey("plugin_updates.id"), nullable=True)
-    frozen = db.Column(db.Boolean, nullable=False, default=False)
+    name: Mapped[str] = Column(String(30), primary_key=True)
+    current_update_id: Mapped[Optional[int]] = Column(
+        ForeignKey("plugin_updates.id"), nullable=True
+    )
+    pending_update_id: Mapped[Optional[int]] = Column(
+        ForeignKey("plugin_updates.id"), nullable=True
+    )
+    frozen: Mapped[bool] = Column(Boolean, nullable=False, default=False)
 
-    current_update: Optional[Mapped["PluginUpdate"]] = db.relationship(
+    current_update: Mapped[Optional[PluginUpdate]] = relationship(
         PluginUpdate, uselist=False, foreign_keys=[current_update_id]
     )
-    pending_update: Optional[Mapped["PluginUpdate"]] = db.relationship(
+    pending_update: Mapped[Optional[PluginUpdate]] = relationship(
         PluginUpdate, uselist=False, foreign_keys=[pending_update_id]
     )
-    available_versions: Mapped[Sequence["PluginVersion"]] = db.relationship(
+    available_versions: Mapped[Sequence["PluginVersion"]] = relationship(
         "PluginVersion", back_populates="plugin"
     )
 
@@ -167,48 +168,45 @@ class Plugin(db.Model):
         else:
             if self.pending_update.id == plugin_version.id:
                 raise ValueError("Cannot overwrite update.")
+
             # update old
             self.pending_update.status = UpdateStatus.FAILED
-            db.session.add(self.pending_update)
+            session.add(self.pending_update)
             # create new
             self.pending_update = PluginUpdate(
                 id=plugin_version.id, status=UpdateStatus.ONGOING
             )
-        db.session.commit()
+        session.commit()
 
         return self.pending_update
 
     @property
     def updates(self) -> Sequence["PluginUpdate"]:
-        # pylint: disable=E1133
         return [v.plugin_update for v in self.available_versions if v.plugin_update]
-
-    @property
-    def controller(self) -> "BasePlugin":
-        from .plugin import BasePlugin
-
-        return BasePlugin.get(self.name)
 
 
 @register_backup
-class ResourceUpdate(db.Model):
+class ResourceUpdate(Base):
     __tablename__ = "resource_updates"
-    __table_args__ = (db.UniqueConstraint("plugin_update_id", "type", "name"),)
+    __table_args__ = (UniqueConstraint("plugin_update_id", "type", "name"),)
 
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(100), nullable=False)
-    type = db.Column(db.String(10), nullable=False)
-    plugin_update_id = db.Column(
-        db.Integer,
-        db.ForeignKey("plugin_updates.id"),
+    id: Mapped[int] = Column(Integer, primary_key=True)
+    name: Mapped[str] = Column(String(100), nullable=False)
+    type: Mapped[str] = Column(String(10), nullable=False)
+    plugin_update_id: Mapped[int] = Column(
+        Integer,
+        ForeignKey("plugin_updates.id"),
         nullable=False,
     )
-    updated_at = db.Column(
-        db.DateTime, nullable=False, default=func.now(), onupdate=func.now()
+    updated_at: Mapped[datetime.datetime] = Column(
+        DateTime,
+        nullable=False,
+        default=func.now(),
+        onupdate=func.now(),
     )
 
-    plugin_update: Mapped["PluginUpdate"] = db.relationship(
-        "PluginUpdate", uselist=False, back_populates="resource_updates"
+    plugin_update: Mapped[PluginUpdate] = relationship(
+        PluginUpdate, uselist=False, back_populates="resource_updates"
     )
 
     __mapper_args__ = {
@@ -219,14 +217,11 @@ class ResourceUpdate(db.Model):
     @staticmethod
     def create(resource: "Resource", plugin_update: "PluginUpdate") -> "ResourceUpdate":
         for class_ in ResourceUpdate.__subclasses__():
-            if class_.__name__ == resource.type + "Update":
-                return cast(
-                    "ResourceUpdate",
-                    class_(
-                        name=resource.name,
-                        type=resource.type,
-                        plugin_update_id=plugin_update.id,
-                    ),
+            if class_.__name__ == resource.get_type() + "Update":
+                return class_(
+                    name=resource.name,
+                    type=resource.get_type(),
+                    plugin_update_id=plugin_update.id,
                 )
 
         raise TypeError
@@ -239,13 +234,14 @@ class ResourceUpdate(db.Model):
 
 
 def qname(resource_update: Union["FileUpdate", "ParquetUpdate"]) -> str:
-    plugin_update = resource_update.plugin_update
-    if not plugin_update:
-        plugin_update = db.session.query(PluginUpdate).get(
-            resource_update.plugin_update_id
-        )
-    plugin_version = plugin_update.plugin_version  # pylint: disable=no-member
-    plugin = plugin_version.plugin.controller
+    from .plugin import BasePlugin
+
+    plugin_update = resource_update.plugin_update or session.get(
+        PluginUpdate, resource_update.plugin_update_id
+    )
+    assert plugin_update is not None
+    plugin_version = plugin_update.plugin_version
+    plugin = BasePlugin.get(plugin_version.plugin_name)
     return str(os.path.join(plugin.dir.by_update(plugin_update), resource_update.name))
 
 
@@ -253,16 +249,26 @@ def qname(resource_update: Union["FileUpdate", "ParquetUpdate"]) -> str:
 class ParquetUpdate(ResourceUpdate):
     __tablename__ = "parquet_updates"
 
-    id = db.Column(db.ForeignKey("resource_updates.id"), primary_key=True)
-    size = db.Column(
-        db.BigInteger, nullable=False, default=wrap_func("qname", path_size)
+    id: Mapped[int] = Column(ForeignKey("resource_updates.id"), primary_key=True)
+    size: Mapped[int] = Column(
+        BigInteger,
+        nullable=False,
+        default=wrap_func("qname", path_size),
     )
-    files = db.Column(
-        db.Integer, nullable=False, default=wrap_func("qname", file_count)
+    files: Mapped[int] = Column(
+        Integer,
+        nullable=False,
+        default=wrap_func("qname", file_count),
     )
-    md5 = db.Column(db.String(32), nullable=False, default=wrap_func("qname", path_md5))
-    modified_at = db.Column(
-        db.DateTime, nullable=False, default=wrap_func("qname", latest_modified_date)
+    md5: Mapped[str] = Column(
+        String(32),
+        nullable=False,
+        default=wrap_func("qname", path_md5),
+    )
+    modified_at: Mapped[datetime.datetime] = Column(
+        DateTime,
+        nullable=False,
+        default=wrap_func("qname", latest_modified_datetime),
     )
 
     def check(self) -> Tuple[bool, Mapping[str, Any]]:
@@ -270,7 +276,7 @@ class ParquetUpdate(ResourceUpdate):
             return False, {}
 
         md5 = path_md5(self.qname)
-        return cast(bool, md5 == self.md5), {"md5": md5}
+        return md5 == self.md5, {"md5": md5}
 
     @property
     def qname(self) -> str:
@@ -287,11 +293,11 @@ class ParquetUpdate(ResourceUpdate):
 
         self.size = file_size(self.qname)
         self.files = file_count(self.qname)
-        self.modified_at = latest_modified_date(self.qname)
+        self.modified_at = latest_modified_datetime(self.qname)
         self.updated_at = func.now()
 
     __mapper_args__ = {
-        "polymorphic_identity": Parquet.type,
+        "polymorphic_identity": Parquet.get_type(),
     }
 
 
@@ -299,13 +305,21 @@ class ParquetUpdate(ResourceUpdate):
 class FileUpdate(ResourceUpdate):
     __tablename__ = "file_updates"
 
-    id = db.Column(db.ForeignKey("resource_updates.id"), primary_key=True)
-    size = db.Column(
-        db.BigInteger, nullable=False, default=wrap_func("qname", file_size)
+    id: Mapped[int] = Column(ForeignKey("resource_updates.id"), primary_key=True)
+    size: Mapped[int] = Column(
+        BigInteger,
+        nullable=False,
+        default=wrap_func("qname", file_size),
     )
-    md5 = db.Column(db.String(32), nullable=False, default=wrap_func("qname", file_md5))
-    modified_at = db.Column(
-        db.DateTime, nullable=False, default=wrap_func("qname", file_modified_datetime)
+    md5: Mapped[str] = Column(
+        String(32),
+        nullable=False,
+        default=wrap_func("qname", file_md5),
+    )
+    modified_at: Mapped[datetime.datetime] = Column(
+        DateTime,
+        nullable=False,
+        default=wrap_func("qname", file_modified_datetime),
     )
 
     def check(self) -> Tuple[bool, Mapping[str, Any]]:
@@ -313,7 +327,7 @@ class FileUpdate(ResourceUpdate):
             return False, {}
 
         md5 = file_md5(self.qname)
-        return cast(bool, md5 == self.md5), {"md5": md5}
+        return md5 == self.md5, {"md5": md5}
 
     @property
     def qname(self) -> str:
@@ -333,7 +347,7 @@ class FileUpdate(ResourceUpdate):
         self.updated_at = func.now()
 
     __mapper_args__ = {
-        "polymorphic_identity": File.type,
+        "polymorphic_identity": File.get_type(),
     }
 
 
@@ -341,21 +355,20 @@ class FileUpdate(ResourceUpdate):
 class TableUpdate(ResourceUpdate):
     __tablename__ = "table_updates"
 
-    id = db.Column(db.ForeignKey("resource_updates.id"), primary_key=True)
-    row_count = db.Column(
-        db.Integer, nullable=False, default=wrap_func("name", table_row_count)
+    id: Mapped[int] = Column(ForeignKey("resource_updates.id"), primary_key=True)
+    row_count: Mapped[int] = Column(
+        Integer,
+        nullable=False,
+        default=wrap_func("name", table_row_count),
     )
 
     def check(self) -> Tuple[bool, Mapping[str, Any]]:
-        assert self.row_count is not None
-
         if not get_ivis("PERFORM_TABLE_CHECK", True):
             return True, {"row_count": self.row_count}
 
-        assert self.name is not None
         db_count = table_row_count(self.name)
         is_zero = db_count == 0
-        is_equal = cast(bool, self.row_count == db_count)
+        is_equal = self.row_count == db_count
         allow_empty_tables = get_ivis("ALLOW_EMPTY_TABLES", False)
         res = (
             is_zero
@@ -379,7 +392,7 @@ class TableUpdate(ResourceUpdate):
         self.updated_at = func.now()
 
     __mapper_args__ = {
-        "polymorphic_identity": Table.type,
+        "polymorphic_identity": Table.get_type(),
     }
 
 
@@ -389,35 +402,33 @@ class PluginMixin:
 
     @declared_attr
     def plugin_fk(self) -> Mapped[str]:
-        return db.Column(
-            db.ForeignKey(Plugin.name), nullable=False, name=self.PLUGIN_FK
-        )
+        return Column(ForeignKey(Plugin.name), nullable=False, name=self.PLUGIN_FK)
 
     @declared_attr
     def plugin(self) -> Mapped[Plugin]:
-        return db.relationship(Plugin, uselist=False)
+        return relationship(Plugin, uselist=False)
 
 
 @register_backup
-class PluginVersion(db.Model):
+class PluginVersion(Base):
     __tablename__ = "plugin_versions"
-    __table_args__ = (db.UniqueConstraint("plugin_name", "version_str"),)
+    __table_args__ = (UniqueConstraint("plugin_name", "version_str"),)
 
-    id = db.Column(db.Integer, primary_key=True)
-    plugin_name = db.Column(db.ForeignKey(Plugin.name), nullable=False)
-    version_str = db.Column(db.String(MAX_VERSION_LENGTH), nullable=False)
-    created_at: Mapped[datetime.datetime] = db.Column(
-        db.DateTime, nullable=False, default=func.now()
+    id: Mapped[int] = Column(Integer, primary_key=True)
+    plugin_name: Mapped[str] = Column(ForeignKey(Plugin.name), nullable=False)
+    version_str: Mapped[str] = Column(String(MAX_VERSION_LENGTH), nullable=False)
+    created_at: Mapped[datetime.datetime] = Column(
+        DateTime, nullable=False, default=func.now()
     )
-    installable = db.Column(db.Boolean, nullable=False, default=True)
+    installable: Mapped[bool] = Column(Boolean, nullable=False, default=True)
 
-    plugin: Mapped["Plugin"] = db.relationship(
+    plugin: Mapped[Plugin] = relationship(
         Plugin,
         uselist=False,
         back_populates="available_versions",
         lazy="subquery",
     )
-    plugin_update: Optional[Mapped["PluginUpdate"]] = db.relationship(
+    plugin_update: Mapped[PluginUpdate] = relationship(
         PluginUpdate,
         uselist=False,
         back_populates="plugin_version",
@@ -426,39 +437,16 @@ class PluginVersion(db.Model):
     )
 
 
-def create_token() -> str:
-    for _ in range(1, 5):
-        token = token_urlsafe(API_TOKEN_LENGTH)
-        user = User.load_by_token(token)
-        if not user:
-            return token[:API_TOKEN_LENGTH]
-    raise Exception()
-
-
 @register_backup
-class User(CommonUser):
-    token = db.Column(
-        db.String(API_TOKEN_LENGTH),
-        nullable=False,
-        unique=True,
-        index=True,
-        default=create_token,
-    )
-
-    @classmethod
-    def load_by_token(cls, token: str) -> Optional["User"]:
-        user = cls.query.filter_by(token=token).first()
-        if not user:
-            return None
-        return cast("User", user)
-
-
-@register_backup
-class Request(db.Model):
+class Request(Base):
     __tablename__ = "requests"
 
-    id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.ForeignKey(User.id), nullable=False)
-    ip = db.Column(db.String(14), nullable=False)
-    request = db.Column(db.String(255), nullable=False)
-    accessed_at = db.Column(db.DateTime, nullable=False, onupdate=func.now())
+    id: Mapped[int] = Column(Integer, primary_key=True)
+    user_id: Mapped[int] = Column(ForeignKey(User.id), nullable=False)
+    ip: Mapped[str] = Column(String(14), nullable=False)
+    request: Mapped[str] = Column(String(255), nullable=False)
+    accessed_at: Mapped[datetime.datetime] = Column(
+        DateTime,
+        nullable=False,
+        onupdate=func.now(),
+    )

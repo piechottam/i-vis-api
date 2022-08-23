@@ -1,8 +1,7 @@
 """Config related."""
+from typing import Any, Mapping, MutableMapping, MutableSet, Set
 
-from typing import Any, Mapping, MutableMapping, Set, MutableSet
 from flask import current_app, has_app_context
-
 from i_vis.core.config import variable_name
 
 CHUNKSIZE = 25e4

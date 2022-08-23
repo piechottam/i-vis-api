@@ -4,7 +4,8 @@ import click
 import pandas as pd
 from flask.cli import AppGroup
 
-from .. import db
+from i_vis.core.db import engine
+
 from ..utils import backup_registry
 
 
@@ -17,7 +18,7 @@ def create(directory: str) -> None:
     for model in backup_registry:
         tname = model.__tablename__
         fname = f"{tname}.tsv"
-        df = pd.read_sql_tname(table_name=tname, con=db.engine)
+        df = pd.read_sql_tname(table_name=tname, con=engine)
         df.to_csv(os.path.join(directory, fname), index=False, sep="\t")
 
 
@@ -37,4 +38,4 @@ def restore(directory: str) -> None:
         potential_tname = os.path.basename(root)
         if potential_tname and potential_tname in tnames:
             df = pd.read_csv(fname, sep="\t")
-            df.to_sql(name=potential_tname, con=db.engine, if_exists="replace")
+            df.to_sql(name=potential_tname, con=engine, if_exists="replace")

@@ -118,3 +118,7 @@ Given a file try to identify and assign columns to entities: gene, variant, etc.
         for col in df.columns:
             print(f"    '{col}': a.Unknown,")
         print("}")
+
+# TODO
+* remove FLASK-SQLalchemy -> FLASK + SQLALCHEMY
+

@@ -1,39 +1,42 @@
 """Utilities"""
 import datetime
+import logging
+from functools import cached_property, partial
+from itertools import islice
+from logging import Logger, LoggerAdapter
 from typing import (
-    cast,
+    TYPE_CHECKING,
     Any,
     Callable,
     Iterable,
     Iterator,
+    Mapping,
+    MutableMapping,
+    MutableSequence,
     Optional,
+    Sequence,
     Tuple,
     Type,
-    MutableSequence,
-    MutableMapping,
-    Mapping,
     Union,
-    TYPE_CHECKING,
+    cast,
 )
-from itertools import islice
-from functools import cached_property
-import logging
 
-from flask import request
+from dask.distributed import get_client, get_worker
 from distributed import worker
+from flask import request
+from pandas import DataFrame
 
 from .config_utils import get_config
 
 if TYPE_CHECKING:
-    from . import db
+    from . import Base
     from .task.base import TaskId
-    from logging import Logger, LoggerAdapter
 
 API_URL_PREFIX = "/api"
 
 # container for models marked for backup
 backup_registry: MutableSequence[Any] = []
-I_VIS_Logger = Union["Logger", "LoggerAdapter"]  # pylint: disable=invalid-name
+ivis_logger = Union[Logger, LoggerAdapter]
 
 
 def to_str(obj: Any, sep: str = ";") -> str:
@@ -43,12 +46,11 @@ def to_str(obj: Any, sep: str = ";") -> str:
     return str(obj)
 
 
-# pylint: disable=C0103
-def getLogger(obj: Optional[Any] = None) -> I_VIS_Logger:
+def get_logger(obj: Optional[Any] = None) -> ivis_logger:
     if obj:
         logger = getattr(obj, "logger")
         if logger:
-            return cast(I_VIS_Logger, logger)
+            return cast(ivis_logger, logger)
 
     # TODO dask
     try:
@@ -110,7 +112,7 @@ class VariableUrl(BaseUrl):
         super().__init__(callback=lambda: str(get_config().get(var_name)), **kwargs)
 
 
-def register_backup(model: Type["db.Model"]) -> Type["db.Model"]:
+def register_backup(model: Type["Base"]) -> Type["Base"]:
     """Mark models for backup.
 
     Args:
@@ -166,3 +168,29 @@ def to_uri(s: str) -> str:
 
 def from_uri(s: str) -> str:
     return s.replace("-", "_")
+
+
+def running_dask() -> bool:
+    # check if we are running in distributed mode
+    try:
+        _ = get_client()
+        _ = get_worker()
+        return True
+    except ValueError:
+        return False
+
+
+def make_hgvs_like_(df: DataFrame, col: str, ref: str, desc: str) -> DataFrame:
+    df[col] = df[ref] + ":" + df[desc]
+    return df
+
+
+def make_hgvs_like(ref: str, desc: str) -> Callable[[DataFrame, str], DataFrame]:
+    return cast(
+        Callable[[DataFrame, str], DataFrame],
+        partial(make_hgvs_like, ref=ref, desc=desc),
+    )
+
+
+def add_prefix(pre: str, s: Sequence[str]) -> Sequence[str]:
+    return [pre + e for e in s]

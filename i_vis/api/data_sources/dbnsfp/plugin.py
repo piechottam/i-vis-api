@@ -10,16 +10,16 @@ dbNSFP
 :credentials: none
 """
 
-from enum import Enum
 from typing import Any
+import enum
 
 from marshmallow import fields
+from sqlalchemy import Column, Float, Enum
 
 from i_vis.core.utils import EnumMixin
 from i_vis.core.version import Default as DefaultVersion
 from . import meta
 from ...config_utils import get_config
-from ... import db
 from ... import terms as t
 from ...etl import ETLSpec, Simple, Exposed, ExposeInfo
 from ...plugin import DataSource
@@ -69,7 +69,7 @@ class Plugin(DataSource):
         # TODO transform and load
 
 
-class LRTPred(EnumMixin, Enum):
+class LRTPred(EnumMixin, enum.Enum):
     D = "Deleterious"
     N = "Neutral"
     U = "Unknown"
@@ -82,7 +82,7 @@ class LRTPredField(fields.String):
         return str(value)
 
 
-class MetaSVMPred(Enum):
+class MetaSVMPred(enum.Enum):
     T = "Tolerated"
     D = "Damaging"
 
@@ -91,7 +91,7 @@ class MetaSVMPredField(fields.Field):
     pass  # TODO
 
 
-class MetaLRPred(EnumMixin, Enum):
+class MetaLRPred(EnumMixin, enum.Enum):
     T = "Tolerated"
     D = "Damaging"
 
@@ -121,8 +121,8 @@ class Spec(ETLSpec):
             cds_strand = Simple()
             lrt_score = Exposed(
                 exposed_info=ExposeInfo(
-                    db_column=db.Column(
-                        db.Float(),
+                    db_column=Column(
+                        Float(),
                     ),
                     fields={
                         "lrt_score": fields.Float,
@@ -132,8 +132,8 @@ class Spec(ETLSpec):
             )
             lrt_converted_rankscore = Exposed(
                 exposed_info=ExposeInfo(
-                    db_column=db.Column(
-                        db.Float(),
+                    db_column=Column(
+                        Float(),
                     ),
                     fields={
                         "lrt_converted_rankscore": fields.Float,
@@ -143,7 +143,7 @@ class Spec(ETLSpec):
             )
             lrt_pred = Exposed(
                 exposed_info=ExposeInfo(
-                    db_column=db.Column(db.Enum(LRTPred)),
+                    db_column=Column(Enum(LRTPred)),
                     fields={
                         "lrt_pred": LRTPredField,
                     },
@@ -153,8 +153,8 @@ class Spec(ETLSpec):
             lrt_omega = Simple(terms=[t.Pathogenicity])
             meta_svm_score = Exposed(
                 exposed_info=ExposeInfo(
-                    db_column=db.Column(
-                        db.Float(),
+                    db_column=Column(
+                        Float(),
                     ),
                     fields={
                         "meta_svm_score": fields.Float,
@@ -164,8 +164,8 @@ class Spec(ETLSpec):
             )
             meta_svm_rankscore = Exposed(
                 exposed_info=ExposeInfo(
-                    db_column=db.Column(
-                        db.Float(),
+                    db_column=Column(
+                        Float(),
                     ),
                     fields={
                         "meta_svm_rankscore": fields.Float,
@@ -175,8 +175,8 @@ class Spec(ETLSpec):
             )
             meta_svm_pred = Exposed(
                 exposed_info=ExposeInfo(
-                    db_column=db.Column(
-                        db.Float(),
+                    db_column=Column(
+                        Float(),
                     ),
                     fields={
                         "meta_svm_pred": MetaSVMPredField,
@@ -186,7 +186,7 @@ class Spec(ETLSpec):
             )
             meta_lr_score = Exposed(
                 exposed_info=ExposeInfo(
-                    db_column=db.Column(db.Float()),
+                    db_column=Column(Float()),
                     fields={
                         "meta_lr_score": fields.Float,
                     },
@@ -195,8 +195,8 @@ class Spec(ETLSpec):
             )
             meta_lr_rankscore = Exposed(
                 exposed_info=ExposeInfo(
-                    db_column=db.Column(
-                        db.Float(),
+                    db_column=Column(
+                        Float(),
                     ),
                     fields={
                         "meta_lr_rankscore": fields.Float,
@@ -206,8 +206,8 @@ class Spec(ETLSpec):
             )
             meta_lr_pred = Exposed(
                 exposed_info=ExposeInfo(
-                    db_column=db.Column(
-                        db.Float(),
+                    db_column=Column(
+                        Float(),
                     ),
                     fields={
                         "meta_lr_pred": MetaLRPredField,
